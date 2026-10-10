@@ -25,7 +25,7 @@ public final class ItemFingerprint {
         JsonObject canonical = itemIdentity(item, false);
         String digest = sha256(canonical.toString());
         ItemCategory category = ItemCategory.classify(item.id());
-        boolean comparable = item.additionalFields().size() == 0 && item.contentsComplete();
+        boolean comparable = item.contentsComplete();
 
         if (ItemCategory.mayHaveHiddenItemVariant(item.id())) {
             ItemAttributes attributes = item.attributes();

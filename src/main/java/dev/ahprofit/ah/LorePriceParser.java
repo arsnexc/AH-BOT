@@ -96,7 +96,7 @@ public final class LorePriceParser {
             if (value.signum() <= 0 || value.compareTo(MAXIMUM) > 0) {
                 return null;
             }
-            return value.stripTrailingZeros();
+            return value;
         } catch (NumberFormatException exception) {
             return null;
         }

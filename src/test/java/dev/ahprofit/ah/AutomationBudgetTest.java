@@ -18,7 +18,9 @@ class AutomationBudgetTest {
         AutomationBudget budget = new AutomationBudget(new BigDecimal("10000"), 10, 0);
 
         assertTrue(budget.allowsSpend(new BigDecimal("6000"), NOW));
+        budget.record(new BigDecimal("6000"), NOW);
         assertTrue(budget.allowsSpend(new BigDecimal("4000"), NOW));
+        budget.record(new BigDecimal("4000"), NOW);
         assertFalse(budget.allowsSpend(new BigDecimal("1"), NOW), "the hourly ceiling must block the next spend");
     }
 

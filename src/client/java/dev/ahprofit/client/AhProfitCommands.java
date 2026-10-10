@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
+import dev.ahprofit.client.ah.AuctionAutomationService;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
 import dev.ahprofit.config.MarketDataMode;
@@ -31,14 +32,15 @@ public final class AhProfitCommands {
     private AhProfitCommands() {
     }
 
-    public static void register(ScannerService scanner, ConfigManager configManager) {
+    public static void register(ScannerService scanner, ConfigManager configManager,
+                                AuctionAutomationService automation) {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
             dispatcher.register(ClientCommandManager.literal("ahprofit")
                     .executes(context -> toggle(context, scanner, configManager))
                     .then(ClientCommandManager.literal("toggle")
                             .executes(context -> toggle(context, scanner, configManager)))
                     .then(ClientCommandManager.literal("status")
-                            .executes(context -> status(context, scanner, configManager)))
+                            .executes(context -> status(context, scanner, configManager, automation)))
                     .then(ClientCommandManager.literal("source")
                             .executes(context -> source(context, scanner, configManager, false))
                             .then(ClientCommandManager.argument("mode", StringArgumentType.word())
@@ -49,6 +51,21 @@ public final class AhProfitCommands {
                                         return builder.buildFuture();
                                     })
                                     .executes(context -> source(context, scanner, configManager, true))))
+                    .then(ClientCommandManager.literal("ah")
+                            .executes(context -> auctionHouse(context, configManager, automation, null))
+                            .then(ClientCommandManager.literal("on")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "on")))
+                            .then(ClientCommandManager.literal("off")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "off")))
+                            .then(ClientCommandManager.literal("dryrun")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "dryrun")))
+                            .then(ClientCommandManager.literal("live")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "live")))
+                            .then(ClientCommandManager.literal("stop")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "stop")))
+                            .then(ClientCommandManager.literal("limits")
+                                    .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
+                                            .executes(context -> auctionLimits(context, scanner, configManager)))))
                     .then(ClientCommandManager.literal("budget")
                             .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> budget(context, scanner, configManager))))
@@ -77,9 +94,89 @@ public final class AhProfitCommands {
     }
 
     private static int status(CommandContext<FabricClientCommandSource> context,
-                              ScannerService scanner, ConfigManager configManager) {
-        sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get());
+                              ScannerService scanner, ConfigManager configManager,
+                              AuctionAutomationService automation) {
+        sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation);
         return 1;
+    }
+
+    private static int auctionHouse(CommandContext<FabricClientCommandSource> context,
+                                    ConfigManager configManager, AuctionAutomationService automation, String action) {
+        if (action == null) {
+            sendAuctionStatus(context.getSource(), configManager.get(), automation);
+            return 1;
+        }
+        switch (action) {
+            case "on" -> {
+                AhProfitConfig updated = configManager.update(current -> current.withAutomationEnabled(true));
+                automation.resume();
+                context.getSource().sendFeedback(Component.literal("AhProfit auction automation ENABLED in "
+                        + (updated.automationDryRun() ? "DRY RUN (reports only, sends no clicks)" : "LIVE mode (it will click)")
+                        + ". It still only buys a listing that clears every filter at its live price, and it obeys "
+                        + "the per-action, hourly, and action-count caps. /ahprofit ah stop halts it instantly."));
+                return 1;
+            }
+            case "off" -> {
+                configManager.update(current -> current.withAutomationEnabled(false));
+                automation.stop();
+                context.getSource().sendFeedback(Component.literal("AhProfit auction automation disabled; it will not click anything."));
+                return 1;
+            }
+            case "dryrun" -> {
+                configManager.update(current -> current.withAutomationEnabled(true).withAutomationDryRun(true));
+                automation.resume();
+                context.getSource().sendFeedback(Component.literal("Dry run enabled: AhProfit reports what it would buy but sends no clicks."));
+                return 1;
+            }
+            case "live" -> {
+                configManager.update(current -> current.withAutomationEnabled(true).withAutomationDryRun(false));
+                automation.resume();
+                context.getSource().sendFeedback(Component.literal("LIVE automation enabled: AhProfit will click listings that clear every filter. "
+                        + "/ahprofit ah stop halts it instantly."));
+                return 1;
+            }
+            case "stop" -> {
+                automation.stop();
+                context.getSource().sendFeedback(Component.literal("AhProfit auction automation HALTED. It stays halted until /ahprofit ah on."));
+                return 1;
+            }
+            default -> {
+                return error(context, "Unknown auction automation action.");
+            }
+        }
+    }
+
+    private static int auctionLimits(CommandContext<FabricClientCommandSource> context,
+                                     ScannerService scanner, ConfigManager configManager) {
+        try {
+            String[] parts = StringArgumentType.getString(context, "amount").trim().split("\\s+");
+            if (parts.length != 2) {
+                return error(context, "Usage: /ahprofit ah limits <per-action> <per-hour>, for example /ahprofit ah limits 500000 5000000");
+            }
+            BigDecimal perAction = Money.parseUserAmount(parts[0]);
+            BigDecimal perHour = Money.parseUserAmount(parts[1]);
+            AhProfitConfig updated = configManager.update(current -> current.withAutomationLimits(
+                    perAction, perHour, current.automationMaxActionsPerHour(),
+                    current.automationCooldownSeconds(), current.automationMinimumScore()));
+            scanner.recomputeCached();
+            context.getSource().sendFeedback(Component.literal("AhProfit automation caps set to "
+                    + Money.format(updated.automationMaxSpendPerAction()) + " per action and "
+                    + Money.format(updated.automationMaxSpendPerHour()) + " per hour."));
+            return 1;
+        } catch (IllegalArgumentException exception) {
+            return error(context, exception.getMessage());
+        }
+    }
+
+    private static void sendAuctionStatus(FabricClientCommandSource source, AhProfitConfig config,
+                                          AuctionAutomationService automation) {
+        source.sendFeedback(Component.literal("AhProfit auction house: " + automation.statusLine(config)));
+        source.sendFeedback(Component.literal("Last decision: " + automation.lastDecision()));
+        source.sendFeedback(Component.literal("This hour: " + automation.actionsThisHour() + " of "
+                + config.automationMaxActionsPerHour() + " actions, "
+                + Money.format(automation.spendThisHour()) + " of "
+                + Money.format(config.automationMaxSpendPerHour()) + " spent."));
+        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | limits <per-action> <per-hour>"));
     }
 
     private static int source(CommandContext<FabricClientCommandSource> context,
@@ -185,11 +282,13 @@ public final class AhProfitCommands {
     private static int help(CommandContext<FabricClientCommandSource> context) {
         FabricClientCommandSource source = context.getSource();
         source.sendFeedback(Component.literal("/ahprofit — toggle the local, read-only scanner and show its current status."));
-        source.sendFeedback(Component.literal("/ahprofit status | source [auto|api|local] | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | refresh | help"));
+        source.sendFeedback(Component.literal("/ahprofit status | source [auto|api|local] | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | ah [on|off|dryrun|live|stop|limits] | refresh | help"));
         source.sendFeedback(Component.literal("Amounts accept values such as 2000000, 2,000,000, or $2,000,000. Balance is manual and is not fetched from /stats."));
         source.sendFeedback(Component.literal("No key? Auto mode uses config/ahprofit/market-input.json, or force /ahprofit source local. Supply actual listings and completed sales; then /ahprofit refresh."));
         source.sendFeedback(Component.literal("Live API mode still needs a key from /api in credentials.json. Local-file prices are not live API-verified quotes."));
-        source.sendFeedback(Component.literal("AhProfit never buys, lists, moves items, clicks menus, or sends trading commands. All trading is manual."));
+        source.sendFeedback(Component.literal("Auction automation is OFF by default and never clicks unless you run /ahprofit ah on. "
+                + "Even then it only buys a listing that clears every filter at its live price, and it obeys the per-action, hourly, and action-count caps."));
+        source.sendFeedback(Component.literal("Dry run first with /ahprofit ah dryrun, then /ahprofit ah live. /ahprofit ah stop halts it instantly."));
         return 1;
     }
 
@@ -215,7 +314,8 @@ public final class AhProfitCommands {
         }
     }
 
-    private static void sendFullStatus(FabricClientCommandSource source, ScannerSnapshot state, AhProfitConfig config) {
+    private static void sendFullStatus(FabricClientCommandSource source, ScannerSnapshot state, AhProfitConfig config,
+                                       AuctionAutomationService automation) {
         long now = System.currentTimeMillis();
         BankrollLimits limits = BankrollManager.calculate(config, now);
         source.sendFeedback(Component.literal("AhProfit scanner: " + (state.running() ? "RUNNING" : "STOPPED")
@@ -234,6 +334,8 @@ public final class AhProfitCommands {
                 + " | deployable " + Money.format(limits.deployableCapital())
                 + " | max listing " + Money.format(limits.maxRecommendedListingSpend())
                 + " | minimum net profit " + Money.format(limits.minimumProfitThreshold())));
+        source.sendFeedback(Component.literal("Auction house: " + automation.statusLine(config)
+                + " | last decision: " + automation.lastDecision()));
 
         MarketAnalysis analysis = state.analysis();
         if (analysis == null) {
@@ -284,6 +386,11 @@ public final class AhProfitCommands {
                 + " | competing listings " + estimate.competingListings()
                 + " | capital " + Money.format(listing.totalPrice())
                 + " | observed " + relativeTime(listing.observedAtMillis(), System.currentTimeMillis())));
+        source.sendFeedback(Component.literal("Flip score " + String.format(java.util.Locale.ROOT, "%.1f", opportunity.score())
+                + " | sell-through " + String.format(java.util.Locale.ROOT, "%.0f%%", opportunity.flipScore().sellThroughProbability() * 100)
+                + " | ~" + String.format(java.util.Locale.ROOT, "%.1f", opportunity.flipScore().expectedDaysToSell()) + "d to clear"
+                + " | profit per capital per day " + String.format(java.util.Locale.ROOT, "%.2f%%", opportunity.flipScore().profitPerCapitalPerDay() * 100)
+                + " | weakest point: " + opportunity.flipScore().dominantWeakness()));
         source.sendFeedback(Component.literal("Ranked because: " + opportunity.rationale()));
         if (!opportunity.flags().isEmpty()) {
             source.sendError(Component.literal("Risk/data flags: " + String.join("; ", opportunity.flags())));

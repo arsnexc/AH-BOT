@@ -1,0 +1,38 @@
+package dev.ahprofit.ah;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+/** One readable slot of the auction-house container the player currently has open. */
+public record AuctionEntry(
+        int slotIndex,
+        String itemId,
+        String displayName,
+        int count,
+        List<String> loreLines,
+        BigDecimal unitPrice,
+        BigDecimal totalPrice,
+        boolean priced
+) {
+    public AuctionEntry {
+        itemId = itemId == null ? "" : itemId;
+        displayName = displayName == null ? "" : displayName;
+        loreLines = List.copyOf(loreLines == null ? List.of() : loreLines);
+    }
+
+    /** Builds an entry from plain strings so the parsing rules stay unit-testable. */
+    public static AuctionEntry of(int slotIndex, String itemId, String displayName, int count,
+                                  List<String> loreLines) {
+        List<String> safeLines = loreLines == null ? List.of() : List.copyOf(loreLines);
+        BigDecimal total = LorePriceParser.findPrice(safeLines, displayName);
+        BigDecimal unit = null;
+        if (total != null && count > 0) {
+            unit = total.divide(BigDecimal.valueOf(count), java.math.MathContext.DECIMAL128);
+        }
+        return new AuctionEntry(slotIndex, itemId, displayName, count, safeLines, unit, total, total != null);
+    }
+
+    public boolean matchesItem(String wantedItemId, int wantedCount) {
+        return count == wantedCount && itemId.equalsIgnoreCase(wantedItemId);
+    }
+}

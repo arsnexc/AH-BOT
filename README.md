@@ -1,8 +1,8 @@
 # AhProfit
 
-AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House research. It supports **key-free local market snapshots** and authenticated polling of documented auction-listing and recent-transaction endpoints. It keeps a local SQLite history, estimates conservative resale values from completed sales, and ranks hypothetical flips against a manually entered bankroll.
+AhProfit is a **client-only Fabric mod** for DonutSMP Auction House research. It supports **key-free local market snapshots**, authenticated polling of documented auction-listing and recent-transaction endpoints, and — only when you explicitly switch it on — auction-house automation with hard spending caps. It keeps a local SQLite history, estimates conservative resale values from completed sales, and ranks flips against a manually entered bankroll.
 
-**It never buys, lists, bids, transfers, clicks auction menus, or sends trade commands.** Recommendations are informational only; every trade is manual and all prices, fees, liquidity estimates, and market conditions must be checked in-game.
+**Auction automation is off by default.** Out of the box AhProfit only reads and advises: it never buys, lists, bids, transfers, clicks auction menus, or sends trade commands. Automation becomes possible only after `/ahprofit ah on`, and even then it obeys per-action, hourly, and action-count ceilings.
 
 ## Features
 
@@ -13,6 +13,8 @@ AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House re
 - Variant-aware item fingerprints. Incomplete/unknown equipment attributes and incomplete container contents are not compared as if they were identical.
 - Resale estimates are based on exact-variant completed sales. Recent weighted medians, median absolute deviation, sample thresholds, freshness, active competition, volatility, confidence, and liquidity proxies are surfaced rather than hidden.
 - Active asks can only lower/cap a completed-sales estimate; asking prices never establish or increase the estimated resale value.
+- **Flips are ranked by capital efficiency and risk-adjusted return, not by raw profit.** A fast, cheap, high-turnover flip now outranks an expensive one with a similar profit but slower turnover. The full score breakdown, sell-through probability, expected days to clear, and profit per capital per day are shown for every recommendation.
+- **Quality gates are enforced rather than only flagged.** Listings below the configured confidence floor or needing longer than the configured days-to-clear are no longer recommended.
 - Recommendations are filtered using net profit after explicit fee/risk haircuts, ROI and discount floors, current data freshness, and bankroll constraints.
 - A hypothetical capital-allocation plan applies total, per-item, per-category, and per-listing caps. It does not reserve or spend money.
 - A small HUD, deduplicated material-change alerts, and detailed local status/recommendation output.
@@ -91,9 +93,25 @@ These use Fabric's **client command API**, are registered locally, and execute o
 | `/ahprofit minprofit <amount>` | Set the absolute net-profit floor. The active floor is the greater of this value and the configured percentage-of-balance floor. |
 | `/ahprofit minroi <percent>` | Set the minimum net ROI percentage, e.g. `25` or `25%`. |
 | `/ahprofit refresh` | Queue a one-shot background refresh/import, subject to a 15-second local cooldown and any applicable upstream API backoff. Does not turn on recurring scans. |
+| `/ahprofit ah` | Show auction-house automation state, its last decision, and the rolling hourly counters. |
+| `/ahprofit ah on` / `ah off` | Enable or disable auction automation. Off is the default and never clicks anything. |
+| `/ahprofit ah dryrun` / `ah live` | Watch what would be bought without clicking, or allow real clicks. |
+| `/ahprofit ah stop` | Halt automation instantly. It stays halted until `ah on`. |
+| `/ahprofit ah limits <per-action> <per-hour>` | Set the spending caps, e.g. `/ahprofit ah limits 500000 5000000`. |
 | `/ahprofit help` | Show quick setup and safety notes. |
 
 A successful balance change re-scores cached records in the background without making an extra API request. A `/ahprofit refresh` is required to refresh market data on demand.
+
+## Flip ranking
+
+Ranking uses capital efficiency and risk-adjusted return rather than raw profit, so a fast cheap flip beats an expensive slow one with a similar profit. Each recommendation reports:
+
+- **sell-through probability** — derived from liquidity, competing supply, and how long current supply takes to clear.
+- **expected days to clear** — how long visible supply takes to absorb at the observed transaction rate.
+- **profit per capital per day** — net profit divided by the capital locked up for that long; the dominant ranking term.
+- **weakest point** — the largest scoring penalty, so you can see why a flip ranks where it does.
+
+Two quality gates are enforced rather than merely flagged: a listing must reach the configured **confidence floor** (`minimumConfidence`, default `0.50`) and must clear within **`maximumDaysToClear`** days (default 14). Otherwise it is counted as uncertain and is not recommended.
 
 ## API use and rate controls
 
@@ -129,6 +147,46 @@ All calculations use the supplied listing/transaction total price and item quant
 - A balance is considered stale if it is unset, older than 24 hours, or has a future timestamp. A stale balance is clearly warned about and disables capital recommendations until refreshed with `/ahprofit budget`.
 - Let `B` be the manual balance and `D` be deployable capital after reserve. Defaults reserve the greater of **20% of B** and the configured minimum reserve. The max spend for one listing is `min(15% of B, 25% of D)`. The hypothetical portfolio is capped at **50% of D** total, **20% of D** per exact item variant, and **35% of D** per broad category. These independent limits mean the remaining deployable balance is not necessarily fully allocated.
 - The plan ranks up to five candidates. It is a suggestion only: AhProfit does not track inventory/other holdings, reserve capital in-game, or know whether the player has already placed a trade.
+
+## Auction-house automation (off by default)
+
+AhProfit can act on the auction-house menu you have open. **It is disabled until you enable it**, and the default `automationDryRun` is `true`, so the first enable only reports what it would do.
+
+What it does:
+
+- Reads the open container menu (slots, item id, stack size, hover name, and lore) — nothing is sent while reading.
+- Parses a price from each listing's lore, preferring keyword lines such as `Price: $1,234` and ignoring quantity lines such as `64 x Diamond`.
+- Matches live listings against ranked opportunities by item id and stack size, choosing the cheapest match.
+- **Re-derives the flip at the live price.** A cached recommendation never buys a listing that no longer clears the profit, ROI, and discount filters at its current price.
+- Clicks the listing to buy it, then moves the carried stack into your inventory.
+
+Safety controls, all enforced server-side of the decision:
+
+| Control | Setting | Default |
+| --- | --- | --- |
+| Master switch | `automationEnabled` | `false` |
+| Dry run (report only) | `automationDryRun` | `true` |
+| Per-action spend cap | `automationMaxSpendPerAction` | `500000` |
+| Hourly spend cap | `automationMaxSpendPerHour` | `5000000` |
+| Actions per hour | `automationMaxActionsPerHour` | `12` |
+| Cooldown between actions | `automationCooldownSeconds` | `10` |
+| Minimum flip score to act | `automationMinimumScore` | `55` |
+
+Spend is counted even if a click fails, so the hourly ceiling stays conservative. `/ahprofit ah stop` halts automation immediately and it stays halted until you re-enable it.
+
+Suggested first use:
+
+```text
+/ahprofit budget 2000000
+/ahprofit ah dryrun
+/ahprofit ah
+```
+
+`/ahprofit ah` shows the last decision and why, so you can confirm the price parsing matches the real menu before switching to `/ahprofit ah live`.
+
+**This has not been tested against the live DonutSMP auction menu.** The lore price patterns are generic heuristics; if the real menu formats prices differently, dry run will show "no readable price" rather than buying. Verify the parsing in dry run before going live.
+
+**Automated trading may violate the server's rules.** Many Minecraft servers prohibit automation or macroing, and doing so can get an account restricted or banned. That risk is yours; check DonutSMP's rules first. AhProfit's caps limit spend, not rule compliance.
 
 Settings and defaults live in `config/ahprofit/settings.json`; `config/ahprofit.example.json` is a reference copy. The API key is separate in `config/ahprofit/credentials.json` (see `config/credentials.example.json`). Price history is in `config/ahprofit/market.sqlite` for the API and `config/ahprofit/local-market.sqlite` for local input. SQLite retains observations and transactions for up to 90 days, prunes old active listings after one day, and analyses only the recent seven-day sales window. The entire config directory is local to the Minecraft game instance; back it up securely if you want to preserve history.
 
@@ -177,6 +235,8 @@ Before release, install the resulting JAR in a Fabric 1.21.11 client, verify `/a
 - Item matching is deliberately strict. Unknown custom attributes, missing equipment durability/enchantment/trim fields, or incomplete container contents may suppress otherwise real opportunities rather than risk mixing different items.
 - Listings may expire or sell between polling and the player's inspection. Prices may move, and no recommendation is a promise of profit.
 - No automatic balance endpoint is used. Manually entered balances can be wrong; updating the balance after every in-game change is the player's responsibility.
+- Auction automation reads whatever container menu is open using generic container and lore heuristics. It has **not** been verified against the real DonutSMP auction menu, and it cannot know a server's custom confirmation dialogs, chat-driven flows, or anti-automation protections. Use dry run first, and expect to adjust the price patterns or abandon automation if the menu differs.
+- Automation only covers buying a listed item. It does not create listings, set prices on the server, or manage an existing inventory; sell-side advice is limited to the recommended list price shown in `/ahprofit status`.
 - GitHub Actions compiles/tests and packages the 1.21.11 target, but the project still needs an in-game smoke test with a live Fabric client and DonutSMP session.
 
 ## License

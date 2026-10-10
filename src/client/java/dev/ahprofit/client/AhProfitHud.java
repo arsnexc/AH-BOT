@@ -2,6 +2,7 @@ package dev.ahprofit.client;
 
 import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
+import dev.ahprofit.client.ah.AuctionAutomationService;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.MarketAnalysis;
@@ -28,11 +29,14 @@ public final class AhProfitHud {
     private static final int MAX_LINES = 9;
     private static volatile long lastTextRefreshMillis;
     private static volatile List<HudLine> cachedLines = List.of();
+    private static volatile AuctionAutomationService automation;
 
     private AhProfitHud() {
     }
 
-    public static void register(ScannerService scanner, dev.ahprofit.config.ConfigManager configManager) {
+    public static void register(ScannerService scanner, dev.ahprofit.config.ConfigManager configManager,
+                                AuctionAutomationService automationService) {
+        automation = automationService;
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, AhProfitClient.id("market_hud"),
                 (graphics, deltaTracker) -> render(graphics, scanner, configManager));
     }
@@ -76,6 +80,7 @@ public final class AhProfitHud {
                 : relativeTime(snapshot.lastSuccessfulFetchMillis(), nowMillis) + (stale ? " STALE" : "");
         int headingColor = stale || !snapshot.apiStatus().hasUsableData() ? 0xFFFFC857 : 0xFF70E0A0;
         lines.add(new HudLine("AhProfit READ-ONLY | " + snapshot.apiStatus().name() + " | data " + freshness, headingColor));
+        lines.add(new HudLine(automationStatus(config), config.automationEnabled() ? 0xFF9BD8FF : 0xFFB9C3D0));
 
         BankrollLimits bankroll = BankrollManager.calculate(config, nowMillis);
         lines.add(new HudLine("Balance " + (bankroll.balanceConfigured() ? shortMoney(bankroll.balance()) : "NOT SET")
@@ -138,6 +143,12 @@ public final class AhProfitHud {
             lines.add(new HudLine(exposure.toString(), 0xFFB9C3D0));
         }
         return List.copyOf(lines.subList(0, Math.min(MAX_LINES, lines.size())));
+    }
+
+    private static String automationStatus(AhProfitConfig config) {
+        AuctionAutomationService service = automation;
+        return service == null ? "AH automation OFF (never clicks; /ahprofit ah on to enable)"
+                : service.statusLine(config);
     }
 
     private static String shortMoney(BigDecimal value) {

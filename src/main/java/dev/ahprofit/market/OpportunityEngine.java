@@ -94,6 +94,14 @@ public final class OpportunityEngine {
                 uncertain++;
                 continue;
             }
+            if (estimate.confidence() < config.minimumConfidence().doubleValue()) {
+                uncertain++;
+                continue;
+            }
+            if (FlipScorer.expectedDaysToSell(estimate) > config.maximumDaysToClear()) {
+                uncertain++;
+                continue;
+            }
 
             BigDecimal resaleRevenue = estimate.conservativeUnitPrice().multiply(BigDecimal.valueOf(listing.quantity()), MathContext.DECIMAL128);
             BigDecimal fee = Money.percentOf(resaleRevenue, config.assumedSellingFeePercent());
@@ -124,10 +132,11 @@ public final class OpportunityEngine {
                 flags.add("manual balance may be stale");
             }
             String rationale = rationale(listing, estimate, config, effectiveRiskPercent, bankroll);
-            double score = score(netProfit, roiPercent, estimate, listing, bankroll, nowMillis, maxListingAgeMillis);
+            FlipScore flipScore = FlipScorer.score(listing, estimate, netProfit, roiPercent, bankroll,
+                    nowMillis, maxListingAgeMillis);
             candidates.add(new Opportunity(listing, estimate, resaleRevenue, fee, risk, netProfit,
-                    roiPercent, discountPercent, Money.divide(netProfit, listing.totalPrice()), score,
-                    rationale, flags));
+                    roiPercent, discountPercent, Money.divide(netProfit, listing.totalPrice()),
+                    flipScore.total(), flipScore, rationale, flags));
         }
 
         CapitalAllocator.Allocation allocation = capitalAllocator.allocate(candidates, bankroll, config.maxRecommendations());
@@ -151,38 +160,6 @@ public final class OpportunityEngine {
                 allocation.categoryExposure(), estimates, warnings);
     }
 
-    private static double score(BigDecimal netProfit, BigDecimal roiPercent, PriceEstimate estimate,
-                                AuctionListing listing, BankrollLimits bankroll, long nowMillis,
-                                long maximumListingAgeMillis) {
-        BigDecimal profitDenominator = bankroll.balance().multiply(new BigDecimal("0.10"), MathContext.DECIMAL128)
-                .max(bankroll.minimumProfitThreshold());
-        double normalizedProfit = Money.divide(netProfit, profitDenominator).doubleValue();
-        double profitScore = clamp(normalizedProfit, 0, 1);
-        double roiScore = clamp(roiPercent.doubleValue() / 100.0, 0, 1);
-        double confidence = estimate.confidence();
-        double liquidityScore = switch (estimate.liquidity()) {
-            case HIGH -> 1.0;
-            case MEDIUM -> 0.68;
-            case LOW -> 0.28;
-            case UNKNOWN -> 0.0;
-        };
-        double salesScore = clamp(estimate.comparableSales7Days() / 20.0, 0, 1);
-        double age = Math.max(0, nowMillis - listing.observedAtMillis());
-        double freshnessScore = maximumListingAgeMillis <= 0 ? 0
-                : clamp(1.0 - age / (double) maximumListingAgeMillis, 0, 1);
-        double volatilityPenalty = estimate.volatilityFraction() == null ? 0.20
-                : Math.min(0.20, estimate.volatilityFraction().doubleValue() * 0.15);
-        double competitionPenalty = Math.min(0.12,
-                estimate.competingListings() / (double) Math.max(1, estimate.comparableSales7Days()) * 0.05);
-        double capitalPenalty = bankroll.maxRecommendedListingSpend().signum() == 0 ? 0
-                : clamp(listing.totalPrice().divide(bankroll.maxRecommendedListingSpend(), MathContext.DECIMAL128).doubleValue(), 0, 1) * 0.08;
-
-        double result = 100.0 * (0.30 * profitScore + 0.20 * roiScore + 0.20 * confidence
-                + 0.15 * liquidityScore + 0.10 * salesScore + 0.05 * freshnessScore)
-                - 100.0 * (volatilityPenalty + competitionPenalty + capitalPenalty);
-        return Math.max(0, result);
-    }
-
     private static String rationale(AuctionListing listing, PriceEstimate estimate, AhProfitConfig config,
                                     BigDecimal effectiveRiskPercent, BankrollLimits bankroll) {
         String recentMedian = estimate.median24HourUnitPrice() == null
@@ -198,9 +175,5 @@ public final class OpportunityEngine {
                 + Money.formatPercent(effectiveRiskPercent) + " risk buffer; spend "
                 + Money.format(listing.totalPrice()) + " is within the single-listing cap of "
                 + Money.format(bankroll.maxRecommendedListingSpend());
-    }
-
-    private static double clamp(double value, double minimum, double maximum) {
-        return Math.max(minimum, Math.min(maximum, value));
     }
 }

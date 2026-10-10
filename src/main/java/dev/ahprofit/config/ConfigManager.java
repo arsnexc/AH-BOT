@@ -209,6 +209,22 @@ public final class ConfigManager implements AutoCloseable {
         boolean alerts = bool(json, "alertsEnabled", defaults.alertsEnabled(), warnings);
         Set<ItemCategory> categories = categories(json.get("enabledCategories"), warnings);
         Set<String> excludedItems = excludedItems(json.get("excludedItems"), warnings);
+        BigDecimal minimumConfidence = decimal(json, "minimumConfidence", defaults.minimumConfidence(),
+                BigDecimal.ZERO, BigDecimal.ONE, warnings);
+        int maximumDaysToClear = integer(json, "maximumDaysToClear", defaults.maximumDaysToClear(), 1, 90, warnings);
+        boolean automationEnabled = bool(json, "automationEnabled", defaults.automationEnabled(), warnings);
+        boolean automationDryRun = bool(json, "automationDryRun", defaults.automationDryRun(), warnings);
+        BigDecimal automationMaxSpendPerAction = decimal(json, "automationMaxSpendPerAction",
+                defaults.automationMaxSpendPerAction(), BigDecimal.ZERO, MAX_BALANCE, warnings);
+        BigDecimal automationMaxSpendPerHour = decimal(json, "automationMaxSpendPerHour",
+                defaults.automationMaxSpendPerHour(), BigDecimal.ZERO, MAX_BALANCE, warnings);
+        int automationMaxActionsPerHour = integer(json, "automationMaxActionsPerHour",
+                defaults.automationMaxActionsPerHour(), 1, 500, warnings);
+        int automationCooldownSeconds = integer(json, "automationCooldownSeconds",
+                defaults.automationCooldownSeconds(), 3, 3_600, warnings);
+        BigDecimal automationMinimumScore = decimal(json, "automationMinimumScore",
+                defaults.automationMinimumScore(), BigDecimal.ZERO, new BigDecimal("100"), warnings);
+        int automationSellSlot = integer(json, "automationSellSlot", defaults.automationSellSlot(), -1, 255, warnings);
 
         AhProfitConfig result = new AhProfitConfig(
                 1, username, "manual", balance, balanceUpdated, reservePercent, minimumReserve,
@@ -216,7 +232,9 @@ public final class ConfigManager implements AutoCloseable {
                 maxCommodityExposurePercent, maxCategoryExposurePercent, pollInterval, minimumRoi,
                 minimumDiscount, profitFloor, profitBalancePercent, minimumSales, maxDataAge,
                 feePercent, riskBuffer, volatilityMultiplier, maxRecommendations, showHud, alerts,
-                categories, excludedItems, marketDataMode
+                categories, excludedItems, marketDataMode, minimumConfidence, maximumDaysToClear,
+                automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
     }
@@ -362,6 +380,16 @@ public final class ConfigManager implements AutoCloseable {
         JsonArray excludedItems = new JsonArray();
         config.excludedItems().stream().sorted().forEach(excludedItems::add);
         json.add("excludedItems", excludedItems);
+        json.addProperty("minimumConfidence", config.minimumConfidence().toPlainString());
+        json.addProperty("maximumDaysToClear", config.maximumDaysToClear());
+        json.addProperty("automationEnabled", config.automationEnabled());
+        json.addProperty("automationDryRun", config.automationDryRun());
+        json.addProperty("automationMaxSpendPerAction", config.automationMaxSpendPerAction().toPlainString());
+        json.addProperty("automationMaxSpendPerHour", config.automationMaxSpendPerHour().toPlainString());
+        json.addProperty("automationMaxActionsPerHour", config.automationMaxActionsPerHour());
+        json.addProperty("automationCooldownSeconds", config.automationCooldownSeconds());
+        json.addProperty("automationMinimumScore", config.automationMinimumScore().toPlainString());
+        json.addProperty("automationSellSlot", config.automationSellSlot());
         return GSON.toJson(json) + System.lineSeparator();
     }
 

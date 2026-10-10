@@ -39,7 +39,8 @@ class AlertDeduplicatorTest {
                 oldEstimate.flags());
         Opportunity changed = new Opportunity(original.listing(), changedEstimate, original.conservativeResaleRevenue(),
                 original.assumedSellingFee(), original.riskBuffer(), original.estimatedNetProfit(), original.roiPercent(),
-                original.discountPercent(), original.profitPerCapitalUnit(), original.score(), original.rationale(), original.flags());
+                original.discountPercent(), original.profitPerCapitalUnit(), original.score(), original.flipScore(),
+                original.rationale(), original.flags());
 
         assertEquals(1, deduplicator.collect(List.of(changed), now + 2_000).size());
     }

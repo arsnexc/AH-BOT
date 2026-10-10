@@ -1,11 +1,13 @@
 package dev.ahprofit.client;
 
 import dev.ahprofit.api.DonutApiClient;
+import dev.ahprofit.client.ah.AuctionAutomationService;
 import dev.ahprofit.config.ConfigManager;
 import dev.ahprofit.database.MarketDatabase;
 import dev.ahprofit.market.OpportunityEngine;
 import dev.ahprofit.scanner.ScannerService;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -21,6 +23,7 @@ public final class AhProfitClient implements ClientModInitializer {
 
     private static ConfigManager configManager;
     private static ScannerService scannerService;
+    private static AuctionAutomationService automationService;
 
     @Override
     public void onInitializeClient() {
@@ -31,16 +34,19 @@ public final class AhProfitClient implements ClientModInitializer {
         MarketDatabase database = new MarketDatabase(configDirectory.resolve("market.sqlite"));
         DonutApiClient apiClient = new DonutApiClient(configManager::apiKeyForRequest);
         scannerService = new ScannerService(configManager, database, apiClient, new OpportunityEngine(), AhProfitClient::notifyPlayer);
+        automationService = new AuctionAutomationService(scannerService, configManager);
 
-        AhProfitCommands.register(scannerService, configManager);
-        AhProfitHud.register(scannerService, configManager);
+        AhProfitCommands.register(scannerService, configManager, automationService);
+        AhProfitHud.register(scannerService, configManager, automationService);
+
+        ClientTickEvents.END_CLIENT_TICK.register(client -> automationService.onClientTick(client));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             scannerService.close();
             configManager.close();
         }, "AhProfit-shutdown"));
 
-        LOGGER.info("AhProfit client initialized. Local command /ahprofit is available; all trading actions remain manual.");
+        LOGGER.info("AhProfit client initialized. Local command /ahprofit is available; trading is manual unless you explicitly enable /ahprofit ah on.");
     }
 
     public static Identifier id(String path) {

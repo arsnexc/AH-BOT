@@ -33,5 +33,15 @@
     "CONTAINERS",
     "OTHER"
   ],
-  "excludedItems": []
+  "excludedItems": [],
+  "minimumConfidence": "0.50",
+  "maximumDaysToClear": 14,
+  "automationEnabled": false,
+  "automationDryRun": true,
+  "automationMaxSpendPerAction": "500000",
+  "automationMaxSpendPerHour": "5000000",
+  "automationMaxActionsPerHour": 12,
+  "automationCooldownSeconds": 10,
+  "automationMinimumScore": "55",
+  "automationSellSlot": -1
 }

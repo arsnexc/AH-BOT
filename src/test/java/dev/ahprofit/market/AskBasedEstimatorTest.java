@@ -73,8 +73,8 @@ class AskBasedEstimatorTest {
         ApiItem emerald = TestMarketFixtures.item("minecraft:emerald", 64);
         AuctionListing candidate = TestMarketFixtures.listing(diamond, "32000", now, "cheap");
         List<AuctionListing> market = new ArrayList<>();
-        market.add(TestMarketFixtures.listing(diamond, now - 3_600_000L, "stale"));
-        market.add(TestMarketFixtures.listing(emerald, now, "other-item"));
+        market.add(TestMarketFixtures.listing(diamond, "128000", now - 3_600_000L, "stale"));
+        market.add(TestMarketFixtures.listing(emerald, "128000", now, "other-item"));
         market.addAll(market(diamond, now, "2000", "2000"));
 
         PriceEstimate estimate = new PriceEstimator().estimateFromAsks(candidate, market, now,

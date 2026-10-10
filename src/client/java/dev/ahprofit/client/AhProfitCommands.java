@@ -41,7 +41,7 @@ public final class AhProfitCommands {
                     .then(ClientCommandManager.literal("toggle")
                             .executes(context -> toggle(context, scanner, configManager)))
                     .then(ClientCommandManager.literal("status")
-                            .executes(context -> status(context, scanner, configManager, automation)))
+                            .executes(context -> status(context, scanner, configManager, automation, recorder)))
                     .then(ClientCommandManager.literal("source")
                             .executes(context -> source(context, scanner, configManager, false))
                             .then(ClientCommandManager.argument("mode", StringArgumentType.word())
@@ -114,7 +114,7 @@ public final class AhProfitCommands {
 
     private static int status(CommandContext<FabricClientCommandSource> context,
                               ScannerService scanner, ConfigManager configManager,
-                              AuctionAutomationService automation) {
+                              AuctionAutomationService automation, AuctionHouseRecorder recorder) {
         sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation, recorder);
         return 1;
     }

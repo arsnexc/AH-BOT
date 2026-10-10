@@ -31,7 +31,7 @@ public final class FlipScorer {
     private static final double WEIGHT_FRESHNESS = 0.04;
 
     /** Profit per capital per day that earns a full efficiency score. */
-    private static final double FULL_EFFICIENCY_PER_DAY = 0.15;
+    private static final double FULL_EFFICIENCY_PER_DAY = 0.05;
     private static final double MAX_CLEARANCE_DAYS = 14.0;
     private static final double CLEARANCE_GRACE_DAYS = 2.0;
     private static final int MAX_EXPECTED_DAYS = 30;

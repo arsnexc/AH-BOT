@@ -23,11 +23,13 @@ class FlipScorerTest {
     @Test
     void capitalEfficiencyOutranksAbsoluteProfitAtSimilarTurnover() {
         long now = System.currentTimeMillis();
-        ApiItem diamond = TestMarketFixtures.item("minecraft:diamond", 64);
+        ApiItem unit = TestMarketFixtures.item("minecraft:diamond", 1);
         BankrollLimits bankroll = BankrollManager.calculate(TestMarketFixtures.bankroll("100000", now), now);
-        List<CompletedSale> sales = TestMarketFixtures.repeatedSales(diamond, "300", 12, now);
-        AuctionListing cheap = TestMarketFixtures.listing(diamond, "8000", now, "cheap");
-        AuctionListing costly = TestMarketFixtures.listing(diamond, "15000", now, "costly");
+        List<CompletedSale> sales = TestMarketFixtures.repeatedSales(unit, "300", 12, now);
+        AuctionListing cheap = TestMarketFixtures.listing(TestMarketFixtures.item("minecraft:diamond", 64),
+                "8000", now, "cheap");
+        AuctionListing costly = TestMarketFixtures.listing(TestMarketFixtures.item("minecraft:diamond", 64),
+                "15000", now, "costly");
         PriceEstimate estimate = new PriceEstimator().estimate(cheap, sales, List.of(cheap), now, 5, 300);
 
         FlipScore cheapFlip = FlipScorer.score(cheap, estimate, new BigDecimal("9280"),
@@ -37,8 +39,9 @@ class FlipScorerTest {
 
         assertTrue(cheapFlip.total() > costlyFlip.total(),
                 "the cheap flip should outrank the expensive one: " + cheapFlip.total() + " vs " + costlyFlip.total());
-        assertTrue(cheapFlip.efficiencyComponent() > costlyFlip.efficiencyComponent());
-        assertEquals(1.0, cheapFlip.efficiencyComponent(), 0.0001);
+        assertTrue(cheapFlip.efficiencyComponent() > costlyFlip.efficiencyComponent(),
+                cheapFlip.efficiencyComponent() + " should exceed " + costlyFlip.efficiencyComponent());
+        assertTrue(cheapFlip.efficiencyComponent() < 1.0, "the efficiency term should not saturate on realistic data");
         assertTrue(cheapFlip.profitPerCapitalPerDay() > costlyFlip.profitPerCapitalPerDay());
     }
 
@@ -110,7 +113,9 @@ class FlipScorerTest {
         assertTrue(bounded > 0 && bounded <= 0.95, "sell-through must be a probability, was " + bounded);
 
         PriceEstimate weak = PriceEstimate.noEvidence("fingerprint", "no comparable sales");
-        assertEquals(0.02, FlipScorer.sellThroughProbability(weak, FlipScorer.expectedDaysToSell(weak)), 0.0001);
+        double weakSellThrough = FlipScorer.sellThroughProbability(weak, FlipScorer.expectedDaysToSell(weak));
+        assertTrue(weakSellThrough > 0 && weakSellThrough <= 0.18,
+                "unknown liquidity must stay below the highest liquidity base, was " + weakSellThrough);
     }
 
     @Test

@@ -76,7 +76,7 @@ public final class HoldingsTracker {
                 || holding == null || undercutPercent == null) {
             return null;
         }
-        BigDecimal unit = cheapestRivalUnitPrice.multiply(BigDecimal.ONE.subtract(undercutPercent));
+        BigDecimal unit = cheapestRivalUnitPrice.subtract(Money.percentOf(cheapestRivalUnitPrice, undercutPercent));
         BigDecimal total = unit.multiply(BigDecimal.valueOf(count));
         return total.max(breakEvenTotal(holding));
     }

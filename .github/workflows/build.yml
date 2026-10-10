@@ -46,6 +46,7 @@ jobs:
           log_path = Path(os.environ["RUNNER_TEMP"]) / "ahprofit-gradle.log"
           lines = log_path.read_text(errors="replace").splitlines() if log_path.exists() else []
           markers = ("FAILURE:", "What went wrong:", "Execution failed for task", "error:",
+                     "symbol:", "location:", "required:", "found:", "No matching variant",
                      "Could not resolve", "Could not find", "Could not GET", "Exception", "Caused by:")
           details = [line.strip() for line in lines if any(marker in line for marker in markers)]
           for report in sorted(Path("build/test-results/test").glob("TEST-*.xml")):

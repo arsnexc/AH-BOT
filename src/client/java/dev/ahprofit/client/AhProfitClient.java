@@ -52,7 +52,7 @@ public final class AhProfitClient implements ClientModInitializer {
         String safeMessage = redact(message);
         client.execute(() -> {
             if (client.player != null) {
-                client.player.sendSystemMessage(Component.literal("[AhProfit] " + safeMessage));
+                client.player.displayClientMessage(Component.literal("[AhProfit] " + safeMessage), false);
             }
         });
     }

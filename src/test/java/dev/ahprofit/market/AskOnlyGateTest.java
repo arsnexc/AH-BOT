@@ -55,7 +55,7 @@ class AskOnlyGateTest {
                 "a listing well below its rivals must be ranked with zero sales");
         Opportunity best = analysis.opportunities().get(0);
         assertTrue(best.estimate().askBased(), "the estimate must be labelled ask-based");
-        assertEquals(0, best.netProfit().signum());
+        assertTrue(best.estimatedNetProfit().signum() > 0, "the ranked flip must be profitable");
     }
 
     @Test

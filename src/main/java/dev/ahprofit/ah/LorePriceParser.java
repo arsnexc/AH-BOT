@@ -97,8 +97,8 @@ public final class LorePriceParser {
                 return null;
             }
             // Canonicalise so equal amounts compare equal regardless of how they were written.
-            BigDecimal normalized = value.stripTrailingZeros();
-            return normalized.signum() == 0 ? BigDecimal.ZERO : new BigDecimal(normalized.toPlainString());
+            BigDecimal canonical = value.stripTrailingZeros();
+            return canonical.signum() == 0 ? BigDecimal.ZERO : new BigDecimal(canonical.toPlainString());
         } catch (NumberFormatException exception) {
             return null;
         }

@@ -15,7 +15,7 @@ import dev.ahprofit.scanner.ScannerService;
 import dev.ahprofit.scanner.ScannerSnapshot;
 import dev.ahprofit.util.Money;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.network.chat.Component;
 
@@ -32,28 +32,27 @@ public final class AhProfitCommands {
 
     public static void register(ScannerService scanner, ConfigManager configManager) {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
-            dispatcher.register(ClientCommands.literal("ahprofit")
-                    .requires(FabricClientCommandSource::attended)
+            dispatcher.register(ClientCommandManager.literal("ahprofit")
                     .executes(context -> toggle(context, scanner, configManager))
-                    .then(ClientCommands.literal("toggle")
+                    .then(ClientCommandManager.literal("toggle")
                             .executes(context -> toggle(context, scanner, configManager)))
-                    .then(ClientCommands.literal("status")
+                    .then(ClientCommandManager.literal("status")
                             .executes(context -> status(context, scanner, configManager)))
-                    .then(ClientCommands.literal("budget")
-                            .then(ClientCommands.argument("amount", StringArgumentType.greedyString())
+                    .then(ClientCommandManager.literal("budget")
+                            .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> budget(context, scanner, configManager))))
-                    .then(ClientCommands.literal("reserve")
-                            .then(ClientCommands.argument("amount", StringArgumentType.greedyString())
+                    .then(ClientCommandManager.literal("reserve")
+                            .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> reserve(context, scanner, configManager))))
-                    .then(ClientCommands.literal("minprofit")
-                            .then(ClientCommands.argument("amount", StringArgumentType.greedyString())
+                    .then(ClientCommandManager.literal("minprofit")
+                            .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> minimumProfit(context, scanner, configManager))))
-                    .then(ClientCommands.literal("minroi")
-                            .then(ClientCommands.argument("percent", StringArgumentType.greedyString())
+                    .then(ClientCommandManager.literal("minroi")
+                            .then(ClientCommandManager.argument("percent", StringArgumentType.greedyString())
                                     .executes(context -> minimumRoi(context, scanner, configManager))))
-                    .then(ClientCommands.literal("refresh")
+                    .then(ClientCommandManager.literal("refresh")
                             .executes(context -> refresh(context, scanner)))
-                    .then(ClientCommands.literal("help")
+                    .then(ClientCommandManager.literal("help")
                             .executes(AhProfitCommands::help)));
         });
     }

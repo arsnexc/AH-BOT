@@ -13,7 +13,7 @@ import dev.ahprofit.util.Money;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -38,7 +38,7 @@ public final class AhProfitHud {
                 (graphics, deltaTracker) -> render(graphics, scanner, configManager));
     }
 
-    private static void render(GuiGraphicsExtractor graphics, ScannerService scanner,
+    private static void render(GuiGraphics graphics, ScannerService scanner,
                                dev.ahprofit.config.ConfigManager configManager) {
         AhProfitConfig config = configManager.get();
         if (!config.showHud()) {
@@ -61,10 +61,10 @@ public final class AhProfitHud {
         int panelWidth = Math.min(372, Math.max(200, client.getWindow().getGuiScaledWidth() - 16));
         int panelHeight = 8 + cachedLines.size() * 10;
         graphics.fill(LEFT, TOP, LEFT + panelWidth, TOP + panelHeight, 0xA0000000);
-        graphics.outline(LEFT, TOP, panelWidth, panelHeight, 0x704A7080);
+        graphics.renderOutline(LEFT, TOP, panelWidth, panelHeight, 0x704A7080);
         int y = TOP + 5;
         for (HudLine line : cachedLines) {
-            graphics.text(client.font, truncate(line.text(), 62), LEFT + 6, y, line.color(), true);
+            graphics.drawString(client.font, truncate(line.text(), 62), LEFT + 6, y, line.color(), true);
             y += 10;
         }
     }

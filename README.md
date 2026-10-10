@@ -19,7 +19,7 @@ AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House re
 
 ## Installation and first run
 
-1. Build the mod (see [Build and verification](#build-and-verification)) and put `build/libs/ahprofit-1.0.0.jar` in the `mods` directory of a Minecraft **client** instance that has Fabric Loader and Fabric API installed.
+1. Build the mod (see [Build and verification](#build-and-verification)) and put `build/libs/ahprofit-1.0.0.jar` in the `mods` directory of a Minecraft **1.21.11 client** instance that has Fabric Loader and Fabric API installed.
 2. Start the client once. AhProfit creates `config/ahprofit/settings.json`, `config/ahprofit/credentials.json`, and `config/ahprofit/market.sqlite` inside that game instance's config directory.
 3. In DonutSMP, create an API key using the server's `/api` command. Add it to `config/ahprofit/credentials.json`:
 
@@ -43,7 +43,7 @@ AhProfit needs a working server-provided API key and live API access to build cu
 
 ## Local commands
 
-These use Fabric's **client command API**, are registered on the client, and require an attended/user-entered command. AhProfit contains no code that sends these command strings as server trade commands.
+These use Fabric's **client command API**, are registered locally, and execute on the client when entered by the player. AhProfit contains no code that sends these command strings as server trade commands.
 
 | Command | Effect |
 | --- | --- |
@@ -101,16 +101,16 @@ Settings and defaults live in `config/ahprofit/settings.json`; `config/ahprofit.
 
 | Component | Project target |
 | --- | --- |
-| Minecraft | `26.2` |
-| Java bytecode / runtime | Java `25` |
+| Minecraft | `1.21.11` |
+| Java bytecode / runtime | Java `21` |
 | Fabric Loader | `0.19.5` or newer |
-| Fabric API | `0.161.0+26.2` |
+| Fabric API | `0.141.6+1.21.11` |
 | Fabric Loom | `1.18-SNAPSHOT` |
 | Gradle wrapper | `9.7.1` |
 | SQLite JDBC | `3.53.4.0` (nested in the mod JAR) |
 | JUnit Jupiter | `6.1.3` |
 
-Build on a machine with the matching Java 25 toolchain and normal access to the Gradle, Fabric, Mojang, and Maven artifact repositories:
+Build on a machine with the matching Java 21 toolchain and normal access to the Gradle, Fabric, Mojang, and Maven artifact repositories:
 
 ```sh
 ./gradlew test
@@ -125,11 +125,11 @@ build/libs/ahprofit-1.0.0.jar
 
 The GitHub Actions workflow at `.github/workflows/build.yml` runs tests and builds this JAR on pushes, pull requests, and manual dispatches. It uploads the runtime mod JAR (not the sources JAR) as an Actions artifact named `ahprofit-mod-<commit SHA>`; download it from the corresponding workflow run's **Artifacts** section. If the build fails, it also publishes Gradle error details and a short-lived diagnostic-log artifact.
 
-### Results in this workspace
+### Verification
 
-**Not verified here. No compiled JAR has been produced.** The available sandbox has no `java` or `javac` executable (`java -version` and `javac -version` both report “command not found”), and its permitted outbound hosts do not include `services.gradle.org` or the Fabric/Mojang/Maven dependency repositories needed by the wrapper/build. To honor that network restriction, the Gradle wrapper/build was not run and no build or JUnit tests are claimed as passing. Java source syntax was checked with a tree-sitter Java parser; this is not a compiler or a substitute for `./gradlew test`/`build`.
+GitHub Actions runs `./gradlew --no-daemon clean test build` with Java 21 for pushes, pull requests, and manual dispatches. A successful run uploads the remapped runtime JAR; the workflow does not launch a live Minecraft client. Local builds require the Gradle, Fabric, Mojang, and Maven artifact repositories described above.
 
-Before release, run both Gradle commands above on the target toolchain, launch a Fabric 26.2 client, verify `/ahprofit` command behavior and HUD rendering in-game, and confirm the packaged JAR contains the nested SQLite JDBC library but no `credentials.json` or API key.
+Before release, install the resulting JAR in a Fabric 1.21.11 client, verify `/ahprofit` command behavior and HUD rendering in-game, and confirm the packaged JAR contains the nested SQLite JDBC library but no `credentials.json` or API key.
 
 ## Known limitations
 
@@ -138,7 +138,7 @@ Before release, run both Gradle commands above on the target toolchain, launch a
 - Item matching is deliberately strict. Unknown custom attributes, missing equipment durability/enchantment/trim fields, or incomplete container contents may suppress otherwise real opportunities rather than risk mixing different items.
 - Listings may expire or sell between polling and the player's inspection. Prices may move, and no recommendation is a promise of profit.
 - No automatic balance endpoint is used. Manually entered balances can be wrong; updating the balance after every in-game change is the player's responsibility.
-- This project has not yet been compiled/tested against an installed Minecraft client in this restricted workspace; see [Results in this workspace](#results-in-this-workspace).
+- GitHub Actions compiles/tests and packages the 1.21.11 target, but the project still needs an in-game smoke test with a live Fabric client and DonutSMP session.
 
 ## License
 

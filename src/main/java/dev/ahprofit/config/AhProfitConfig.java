@@ -51,7 +51,8 @@ public record AhProfitConfig(
         boolean askOnlyAnalysis,
         int askMinimumListings,
         BigDecimal askMinimumSpreadPercent,
-        BigDecimal askUndercutPercent
+        BigDecimal askUndercutPercent,
+        BigDecimal askMinimumRoiPercent
 ) {
     public AhProfitConfig {
         if (schemaVersion < 1) {
@@ -118,6 +119,7 @@ public record AhProfitConfig(
         }
         askMinimumSpreadPercent = boundedPercent(askMinimumSpreadPercent, "askMinimumSpreadPercent", 99);
         askUndercutPercent = boundedPercent(askUndercutPercent, "askUndercutPercent", 50);
+        askMinimumRoiPercent = boundedPercent(askMinimumRoiPercent, "askMinimumRoiPercent", 1_000);
     }
 
     public static AhProfitConfig defaults() {
@@ -162,9 +164,10 @@ public record AhProfitConfig(
                 -1,
                 -1,
                 false,
-                4,
-                new BigDecimal("35"),
-                new BigDecimal("2")
+                2,
+                new BigDecimal("15"),
+                new BigDecimal("2"),
+                new BigDecimal("5")
         );
     }
 
@@ -261,7 +264,8 @@ public record AhProfitConfig(
                 minimumConfidence, maximumDaysToClear, newAutomationEnabled, newDryRun, newMaxSpendPerAction,
                 newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore,
                 automationSellSlot, automationConfirmSlot,
-                newAskOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
+                newAskOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent,
+                askMinimumRoiPercent
         );
     }
 

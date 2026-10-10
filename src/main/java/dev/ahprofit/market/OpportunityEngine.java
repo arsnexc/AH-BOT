@@ -46,6 +46,16 @@ public final class OpportunityEngine {
         int uncertain = 0;
         int economicallyQualified = 0;
         int analyzed = 0;
+        // Why listings were dropped, so an empty result is never a silent mystery.
+        int rejectedStale = 0;
+        int rejectedNoBalance = 0;
+        int rejectedTooExpensive = 0;
+        int rejectedNoEvidence = 0;
+        int rejectedNoRival = 0;
+        int rejectedSpreadTooSmall = 0;
+        int rejectedUnprofitable = 0;
+        int rejectedBelowRoi = 0;
+        int rejectedBelowDiscount = 0;
         long maxListingAgeMillis = Duration.ofSeconds(config.maxDataAgeSeconds()).toMillis();
         BigDecimal minimumProfit = bankroll.minimumProfitThreshold();
 
@@ -67,6 +77,7 @@ public final class OpportunityEngine {
             analyzed++;
             if (nowMillis - listing.observedAtMillis() > maxListingAgeMillis
                     || listing.expiresAtMillis() <= nowMillis) {
+                rejectedStale++;
                 continue;
             }
             if (!config.enabledCategories().contains(listing.category())
@@ -79,9 +90,11 @@ public final class OpportunityEngine {
             }
             if (!bankroll.balanceConfigured() || bankroll.balanceMayBeStale()
                     || bankroll.maxRecommendedListingSpend().signum() <= 0) {
+                rejectedNoBalance++;
                 continue;
             }
             if (listing.totalPrice().compareTo(bankroll.maxRecommendedListingSpend()) > 0) {
+                rejectedTooExpensive++;
                 continue;
             }
 
@@ -106,6 +119,11 @@ public final class OpportunityEngine {
                 // confidence, and clearance gates do not apply because there are no sales.
                 if (!estimate.sufficientEvidence()) {
                     uncertain++;
+                    if (exactListings.size() < config.askMinimumListings()) {
+                        rejectedNoRival++;
+                    } else {
+                        rejectedSpreadTooSmall++;
+                    }
                     continue;
                 }
             } else {
@@ -133,15 +151,39 @@ public final class OpportunityEngine {
             BigDecimal effectiveRiskPercent = config.baseRiskBufferPercent().add(volatilityRiskPercent, MathContext.DECIMAL128);
             BigDecimal risk = Money.percentOf(resaleRevenue, effectiveRiskPercent);
             BigDecimal netProfit = resaleRevenue.subtract(fee).subtract(risk).subtract(listing.totalPrice());
-            if (netProfit.signum() <= 0 || netProfit.compareTo(minimumProfit) < 0) {
+            // With no completed sales the bankroll is a guess with no relation to observed spreads,
+            // so an ask-based flip is held to a floor relative to its own price, not to the balance.
+            BigDecimal profitFloor = estimate.askBased()
+                    ? Money.percentOf(listing.totalPrice(), config.minimumProfitBalancePercent())
+                    : minimumProfit;
+            if (netProfit.signum() <= 0 || netProfit.compareTo(profitFloor) < 0) {
+                if (estimate.askBased()) {
+                    rejectedUnprofitable++;
+                }
                 continue;
             }
             BigDecimal roiPercent = Money.divide(netProfit, listing.totalPrice())
                     .multiply(new BigDecimal("100"), MathContext.DECIMAL128);
             BigDecimal discountPercent = Money.divide(resaleRevenue.subtract(listing.totalPrice()), resaleRevenue)
                     .multiply(new BigDecimal("100"), MathContext.DECIMAL128);
-            if (roiPercent.compareTo(config.minimumRoiPercent()) < 0
-                    || discountPercent.compareTo(config.minimumDiscountPercent()) < 0) {
+            // An ask-based flip already proved its spread against rival asks, so that spread is its
+            // discount requirement; the sale-backed discount against a median still applies otherwise.
+            BigDecimal discountFloor = estimate.askBased()
+                    ? config.askMinimumSpreadPercent()
+                    : config.minimumDiscountPercent();
+            BigDecimal roiFloor = estimate.askBased()
+                    ? config.askMinimumRoiPercent()
+                    : config.minimumRoiPercent();
+            if (roiPercent.compareTo(roiFloor) < 0) {
+                if (estimate.askBased()) {
+                    rejectedBelowRoi++;
+                }
+                continue;
+            }
+            if (discountPercent.compareTo(discountFloor) < 0) {
+                if (estimate.askBased()) {
+                    rejectedBelowDiscount++;
+                }
                 continue;
             }
 
@@ -170,6 +212,15 @@ public final class OpportunityEngine {
         }
         if (safeListings.isEmpty()) {
             warnings.add("No current auction listings are cached yet.");
+        }
+        if (analyzed > 0 && allocation.opportunities().isEmpty()) {
+            warnings.add("No flip passed the filters. Seen " + analyzed + " listings; dropped "
+                    + rejectedStale + " stale, " + rejectedNoBalance + " for no configured balance"
+                    + ", " + rejectedTooExpensive + " above the spend cap, " + rejectedNoRival
+                    + " with too few rival asks, " + rejectedSpreadTooSmall
+                    + " with too small a spread, " + rejectedUnprofitable + " unprofitable after fees"
+                    + ", " + rejectedBelowRoi + " below the ROI floor, " + rejectedBelowDiscount
+                    + " below the spread floor.");
         }
         if (economicallyQualified > allocation.opportunities().size()) {
             warnings.add("Some profitable listings were left out to respect total, item, or category exposure limits.");

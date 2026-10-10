@@ -235,6 +235,8 @@ public final class ConfigManager implements AutoCloseable {
         int askMinimumListings = integer(json, "askMinimumListings", defaults.askMinimumListings(), 2, 50, warnings);
         BigDecimal askMinimumSpreadPercent = decimal(json, "askMinimumSpreadPercent",
                 defaults.askMinimumSpreadPercent(), BigDecimal.ZERO, new BigDecimal("99"), warnings);
+        BigDecimal askMinimumRoiPercent = decimal(json, "askMinimumRoiPercent",
+                defaults.askMinimumRoiPercent(), BigDecimal.ZERO, new BigDecimal("1000"), warnings);
         BigDecimal askUndercutPercent = decimal(json, "askUndercutPercent", defaults.askUndercutPercent(),
                 BigDecimal.ZERO, new BigDecimal("50"), warnings);
 
@@ -247,7 +249,8 @@ public final class ConfigManager implements AutoCloseable {
                 categories, excludedItems, marketDataMode, minimumConfidence, maximumDaysToClear,
                 automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
                 automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot, automationConfirmSlot,
-                askOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
+                askOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent,
+                askMinimumRoiPercent
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
     }

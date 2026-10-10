@@ -1,10 +1,13 @@
 package dev.ahprofit.client.ah;
 
 import dev.ahprofit.ah.AuctionEntry;
+import dev.ahprofit.ah.LorePriceParser;
 import dev.ahprofit.ah.AuctionHouseSnapshot;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
@@ -47,10 +50,48 @@ public final class AuctionHouseReader {
             if (stack.isEmpty()) {
                 continue;
             }
-            entries.add(AuctionEntry.of(slot.index, itemId(stack), displayName(stack),
-                    stack.getCount(), lore(stack)));
+            List<String> lore = lore(stack);
+            String name = displayName(stack);
+            BigDecimal price = LorePriceParser.findPrice(lore, name, priceText(stack, lore, name));
+            entries.add(AuctionEntry.of(slot.index, itemId(stack), name, stack.getCount(), lore, price));
         }
         return new AuctionHouseSnapshot(menu.containerId, title, entries, nowMillis);
+    }
+
+    /**
+     * Every piece of text on an item that could carry a price: lore, the display name, and the
+     * custom-name and custom-data components. Plugin GUIs frequently store the asking price in NBT
+     * rather than lore, so lore alone is not enough.
+     */
+    private static List<String> priceText(ItemStack stack, List<String> lore, String displayName) {
+        List<String> sources = new ArrayList<>();
+        if (lore != null) {
+            sources.addAll(lore);
+        }
+        if (displayName != null && !displayName.isBlank()) {
+            sources.add(displayName);
+        }
+        try {
+            Component customName = stack.get(DataComponents.CUSTOM_NAME);
+            if (customName != null) {
+                sources.add(customName.getString());
+            }
+            Component itemName = stack.get(DataComponents.ITEM_NAME);
+            if (itemName != null) {
+                sources.add(itemName.getString());
+            }
+        } catch (RuntimeException ignored) {
+            // A component that cannot be read simply contributes no text.
+        }
+        try {
+            CustomData custom = stack.get(DataComponents.CUSTOM_DATA);
+            if (custom != null) {
+                sources.add(custom.toString());
+            }
+        } catch (RuntimeException ignored) {
+            // Same: an unreadable component contributes nothing.
+        }
+        return sources;
     }
 
     /** True when a container menu other than the player's own inventory is open. */
@@ -107,7 +148,8 @@ public final class AuctionHouseReader {
             }
             listed++;
             List<String> lore = lore(stack);
-            BigDecimal price = dev.ahprofit.ah.LorePriceParser.findPrice(lore, displayName(stack));
+            String name = displayName(stack);
+            BigDecimal price = LorePriceParser.findPrice(lore, name, priceText(stack, lore, name));
             if (price != null) {
                 priced++;
             }

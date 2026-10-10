@@ -32,6 +32,21 @@ public record AuctionEntry(
         return new AuctionEntry(slotIndex, itemId, displayName, count, safeLines, unit, total, total != null);
     }
 
+    /**
+     * Builds an entry with a price already resolved from extra sources such as custom-data
+     * components, which the plain-string factory cannot see.
+     */
+    public static AuctionEntry of(int slotIndex, String itemId, String displayName, int count,
+                                  List<String> loreLines, BigDecimal totalPrice) {
+        List<String> safeLines = loreLines == null ? List.of() : List.copyOf(loreLines);
+        BigDecimal total = totalPrice;
+        BigDecimal unit = null;
+        if (total != null && total.signum() > 0 && count > 0) {
+            unit = total.divide(BigDecimal.valueOf(count), java.math.MathContext.DECIMAL128);
+        }
+        return new AuctionEntry(slotIndex, itemId, displayName, count, safeLines, unit, total, total != null);
+    }
+
     public boolean matchesItem(String wantedItemId, int wantedCount) {
         return count == wantedCount && itemId.equalsIgnoreCase(wantedItemId);
     }

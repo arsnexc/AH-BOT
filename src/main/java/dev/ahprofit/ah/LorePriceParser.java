@@ -28,8 +28,13 @@ public final class LorePriceParser {
      * letter "b" in "5 boxes" would be read as billions.
      */
     private static final Pattern AMOUNT = Pattern.compile(
-            "([0-9][0-9]*(?:[.,'][0-9]{3})*(?:\\.[0-9]+)?)(?:\\s*(k|m|b|kk|mil|million|billion)\\b)?",
+            "([0-9][0-9]*(?:[.,'][0-9]{3})*(?:\\.[0-9]+)?)(?:\\s*(k|m|b|kk|mil|million|billion)\\b)?(?![a-z])",
             Pattern.CASE_INSENSITIVE);
+
+    /** A line that is nothing but an amount, optionally wrapped in currency words or punctuation. */
+    private static final Pattern BARE_AMOUNT_LINE = Pattern.compile(
+            "(?i)^[^0-9a-z]*[0-9][0-9.,']*(?:\\s*(?:k|m|b|kk|mil|million|billion))?"
+            + "\\s*(?:coins?|money|cash|usd|dollars?)?\\s*[.!?]*$");
 
     /** Words that mean "this line is the price". */
     private static final Pattern PRICE_KEYWORD = Pattern.compile(
@@ -109,9 +114,12 @@ public final class LorePriceParser {
                 return value;
             }
         }
-        // 3. Any line that is not a count.
+        // 3. A line carrying an explicit currency marker.
         for (String line : cleaned) {
             if (QUANTITY_KEYWORD.matcher(line).find() || COUNT_GLUE.matcher(line).find()) {
+                continue;
+            }
+            if (!CURRENCY.matcher(line).find()) {
                 continue;
             }
             BigDecimal value = lastAmount(line);
@@ -119,6 +127,18 @@ public final class LorePriceParser {
                 return value;
             }
         }
+        // 4. A line that is essentially only an amount.
+        for (String line : cleaned) {
+            if (!BARE_AMOUNT_LINE.matcher(line).matches()) {
+                continue;
+            }
+            BigDecimal value = lastAmount(line);
+            if (value != null) {
+                return value;
+            }
+        }
+        // Deliberately no final fallback: "64 Diamonds" and "Expires in 2h" must never become a
+        // price, because one wrong price silently corrupts every spread computed from it.
         return null;
     }
 
@@ -130,6 +150,9 @@ public final class LorePriceParser {
         Matcher matcher = AMOUNT.matcher(line);
         BigDecimal last = null;
         while (matcher.find()) {
+            if (isNegated(line, matcher.start())) {
+                continue;
+            }
             BigDecimal parsed = toAmount(matcher.group(1), matcher.group(2));
             if (parsed != null) {
                 last = parsed;
@@ -143,6 +166,18 @@ public final class LorePriceParser {
      * apostrophes, or underscores, but a single dot followed by exactly two digits is read as a
      * decimal point so "1234.56" is one thousand two hundred and thirty-four point five six.
      */
+    /** True when the amount is written as a subtraction, which is never an asking price. */
+    private static boolean isNegated(String line, int start) {
+        for (int index = start - 1; index >= 0; index--) {
+            char character = line.charAt(index);
+            if (Character.isWhitespace(character)) {
+                continue;
+            }
+            return character == '-' || character == '\u2212';
+        }
+        return false;
+    }
+
     private static BigDecimal toAmount(String digits, String suffix) {
         if (digits == null) {
             return null;
@@ -162,8 +197,8 @@ public final class LorePriceParser {
             if (first != last) {
                 // Several dots can only be grouping: 1.234.567
                 normalized = normalized.replace(".", "");
-            } else if (last - first != 2) {
-                // Not a two-digit decimal part, so it is grouping: 1.500
+            } else if (normalized.length() - 1 - last >= 3) {
+                // Three or more digits after a lone dot is grouping: 1.500
                 normalized = normalized.replace(".", "");
             }
         }

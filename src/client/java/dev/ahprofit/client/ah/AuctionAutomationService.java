@@ -11,6 +11,7 @@ import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
 import dev.ahprofit.market.MarketAnalysis;
 import dev.ahprofit.scanner.ScannerService;
+import dev.ahprofit.scanner.ScannerSnapshot;
 import dev.ahprofit.util.Money;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;

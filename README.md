@@ -49,8 +49,11 @@ AhProfit is a **client-only Fabric mod** for DonutSMP Auction House research. It
 1. Run `/ahprofit source local` to explicitly disable API requests, even if a key is saved. Alternatively, leave the default `auto` mode with no key configured.
 2. Enter a fresh manual balance with `/ahprofit budget <amount>`.
 3. Supply a UTF-8 JSON file at `config/ahprofit/market-input.json` in the game instance. Start from `config/market-input.example.json` in this repository, **replace the illustrative records with actual observations**, and set real epoch-millisecond timestamps. The example's zero observation timestamp is intentionally invalid; it is not seeded into the running mod.
-4. Run `/ahprofit refresh` for one background import, or `/ahprofit` to periodically re-read the file. AhProfit does not obtain or generate this file for you, scrape auction screens, click menus, or invent completed transactions.
-5. Use `/ahprofit status` and the HUD as usual. They explicitly label the data as `LOCAL`, `LOCAL_WAITING` (input file absent), or `LOCAL_ERROR` (invalid/unreadable/older input). An absent file leaves the local bankroll tools and any existing local cache available, not a stream of live listings.
+4. **Collect listings in game instead of typing them**: run `/ahprofit ah record on`, then open the auction house and browse. AhProfit reads the open menu and writes what you looked at to `config/ahprofit/ah-observed.json`, which is merged with your `market-input.json` on the next refresh. It never clicks anything to do this, and it only holds the last ten minutes of listings, because a listing seen ten minutes ago is no longer a current asking price.
+5. Run `/ahprofit refresh` for one background import, or `/ahprofit` to periodically re-read the file. AhProfit does not obtain or generate this file for you, click menus, or invent completed transactions.
+6. Use `/ahprofit status` and the HUD as usual. They explicitly label the data as `LOCAL`, `LOCAL_WAITING` (input file absent), or `LOCAL_ERROR` (invalid/unreadable/older input). An absent file leaves the local bankroll tools and any existing local cache available, not a stream of live listings.
+
+With **zero completed sales**, `/ahprofit askonly on` ranks flips by asking-price spread instead: the resale target is the cheapest rival ask for the same item undercut by `askUndercutPercent`, never the market median. Without it, zero sales means zero opportunities, so nothing is ranked and automation has nothing to buy.
 
 Source selection is persisted in `settings.json` as `marketDataMode`:
 
@@ -97,6 +100,11 @@ These use Fabric's **client command API**, are registered locally, and execute o
 | `/ahprofit ah on` / `ah off` | Enable or disable auction automation. Off is the default and never clicks anything. |
 | `/ahprofit ah dryrun` / `ah live` | Watch what would be bought without clicking, or allow real clicks. |
 | `/ahprofit ah stop` | Halt automation instantly. It stays halted until `ah on`. |
+| `/ahprofit ah record [on\|off]` | Read the open auction-house menu into `ah-observed.json`. Read-only; never clicks. |
+| `/ahprofit ah holdings` | List what automation bought this session, with the unit cost paid. |
+| `/ahprofit ah sellplan` | Break-even and recommended list price for each holding. |
+| `/ahprofit ah sell` | List the first holding. Refuses to click unless `automationSellSlot` and `automationConfirmSlot` are set. |
+| `/ahprofit askonly on` / `askonly off` | Rank flips by asking-price spread, which works with no completed sales. |
 | `/ahprofit ah limits <per-action> <per-hour>` | Set the spending caps, e.g. `/ahprofit ah limits 500000 5000000`. |
 | `/ahprofit help` | Show quick setup and safety notes. |
 
@@ -178,11 +186,19 @@ Suggested first use:
 
 ```text
 /ahprofit budget 2000000
+/ahprofit askonly on
+/ahprofit ah record on
 /ahprofit ah dryrun
 /ahprofit ah
 ```
 
-`/ahprofit ah` shows the last decision and why, so you can confirm the price parsing matches the real menu before switching to `/ahprofit ah live`.
+Browse the auction house while recording is on, then `/ahprofit refresh` and `/ahprofit status` to see the ranked flips. `/ahprofit ah` shows the last decision and why, so you can confirm the price parsing matches the real menu before switching to `/ahprofit ah live`.
+
+### Selling what you bought
+
+Automation remembers what it bought this session, with the unit price actually paid. `/ahprofit ah holdings` lists it and `/ahprofit ah sellplan` shows the break-even and the recommended list price for each holding. The recommended price undercuts the cheapest visible rival ask but never drops below your own cost, so the plan cannot advise you into a guaranteed loss.
+
+`/ahprofit ah sell` performs the listing. Because AhProfit does not know DonutSMP's sell-menu layout, it refuses to click unless you map `automationSellSlot` (the button that opens the sell view) and `automationConfirmSlot` (the button that confirms) in `config/ahprofit/settings.json`. Both default to `-1`, so no unverified slot is ever clicked. Selling obeys the same dry-run setting as buying, and `/ahprofit ah stop` halts it.
 
 **This has not been tested against the live DonutSMP auction menu.** The lore price patterns are generic heuristics; if the real menu formats prices differently, dry run will show "no readable price" rather than buying. Verify the parsing in dry run before going live.
 

@@ -19,8 +19,12 @@ public final class LorePriceParser {
     private LorePriceParser() {
     }
 
-    /** Section signs, hex-colour runs, and stray ellipsis used by GUI rendering. */
-    private static final Pattern FORMATTING = Pattern.compile("[\\u00a7][0-9a-fk-orA-FK-OR]?|\\u2026");
+    /**
+     * Section signs followed by any single formatting code, plus the stray ellipsis GUI rendering
+     * adds. The code class must include every letter, because the hex-colour marker "x" is not a
+     * colour digit and a surviving "x" would glue itself to the next word.
+     */
+    private static final Pattern FORMATTING = Pattern.compile("[\\u00a7][0-9a-zA-Z]?|\\u2026");
 
     /**
      * A number with optional grouping separators and an optional decimal part, followed by an

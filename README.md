@@ -194,6 +194,12 @@ Suggested first use:
 
 Browse the auction house while recording is on, then `/ahprofit refresh` and `/ahprofit status` to see the ranked flips. `/ahprofit ah` shows the last decision and why, so you can confirm the price parsing matches the real menu before switching to `/ahprofit ah live`.
 
+### When something does not work
+
+Run `/ahprofit ah probe` with the auction house open. It prints the open screen's class, the container menu's id and title, whether AhProfit recognises it as a readable menu, how many slots hold items, how many of those have a price the lore parser can read, and the raw lore lines of the first few items. It then prints the market-data mode, whether a key is present, the scanner status, how many opportunities the last analysis produced, and how many of those are ask-based.
+
+That output is the fastest way to find out which of the four things actually broke: the menu is not being read, the prices are not being parsed, the data never reached the database, or the analysis produced nothing. While the harvester is on, the HUD shows a live `AH recorder ON: N listings` line so recording is never a silent black box.
+
 ### Selling what you bought
 
 Automation remembers what it bought this session, with the unit price actually paid. `/ahprofit ah holdings` lists it and `/ahprofit ah sellplan` shows the break-even and the recommended list price for each holding. The recommended price undercuts the cheapest visible rival ask but never drops below your own cost, so the plan cannot advise you into a guaranteed loss.

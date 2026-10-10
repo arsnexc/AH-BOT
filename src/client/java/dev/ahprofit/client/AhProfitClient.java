@@ -40,7 +40,7 @@ public final class AhProfitClient implements ClientModInitializer {
         recorder = new AuctionHouseRecorder(configManager.observedAuctionPath(), scannerService);
 
         AhProfitCommands.register(scannerService, configManager, automationService, recorder);
-        AhProfitHud.register(scannerService, configManager, automationService);
+        AhProfitHud.register(scannerService, configManager, automationService, recorder);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             automationService.onClientTick(client);

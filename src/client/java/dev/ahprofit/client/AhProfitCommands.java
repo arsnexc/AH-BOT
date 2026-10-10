@@ -5,6 +5,7 @@ import com.mojang.brigadier.context.CommandContext;
 import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
 import dev.ahprofit.client.ah.AuctionAutomationService;
+import dev.ahprofit.client.ah.AuctionHouseReader;
 import dev.ahprofit.client.ah.AuctionHouseRecorder;
 import dev.ahprofit.ah.HoldingsTracker;
 import java.util.List;
@@ -81,6 +82,8 @@ public final class AhProfitCommands {
                                                 return builder.buildFuture();
                                             })
                                             .executes(context -> record(context, recorder, StringArgumentType.getString(context, "mode")))))
+                            .then(ClientCommandManager.literal("probe")
+                                    .executes(context -> probe(context, automation, recorder)))
                             .then(ClientCommandManager.literal("limits")
                                     .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                             .executes(context -> auctionLimits(context, scanner, configManager)))))
@@ -159,6 +162,22 @@ public final class AhProfitCommands {
                              AuctionAutomationService automation) {
         String outcome = automation.beginSell();
         context.getSource().sendFeedback(Component.literal("AhProfit: " + outcome));
+        return 1;
+    }
+
+    /** Dumps everything the mod can see, so an unreadable menu is diagnosable rather than guessed at. */
+    private static int probe(CommandContext<FabricClientCommandSource> context,
+                             AuctionAutomationService automation, AuctionHouseRecorder recorder) {
+        context.getSource().sendFeedback(Component.literal("--- AhProfit probe ---"));
+        for (String line : AuctionHouseReader.probe(net.minecraft.client.Minecraft.getInstance())) {
+            context.getSource().sendFeedback(Component.literal(line));
+        }
+        context.getSource().sendFeedback(Component.literal("Recorder: "
+                + (recorder.isRecording() ? "RECORDING" : "stopped") + " | " + recorder.status()
+                + " | output file exists: " + recorder.outputExists()));
+        for (String line : automation.diagnostics()) {
+            context.getSource().sendFeedback(Component.literal(line));
+        }
         return 1;
     }
 

@@ -346,6 +346,35 @@ public final class AuctionAutomationService {
         return -1;
     }
 
+    /** Scanner, analysis and holdings facts, for /ahprofit ah probe. */
+    public List<String> diagnostics() {
+        AhProfitConfig config = configManager.get();
+        ScannerSnapshot state = scanner.snapshot();
+        List<String> lines = new ArrayList<>();
+        lines.add("Market data mode: " + config.marketDataMode()
+                + " | using local data: " + scanner.isUsingLocalData()
+                + " | API key present: " + !configManager.apiKeyForRequest().isBlank());
+        lines.add("Scanner status: " + state.apiStatus() + " | " + state.apiMessage());
+        lines.add("Ask-only analysis: " + (config.askOnlyAnalysis() ? "ON" : "OFF")
+                + " | undercut " + config.askUndercutPercent() + "%"
+                + " | minimum listings " + config.askMinimumListings());
+        MarketAnalysis analysis = state.analysis();
+        if (analysis == null) {
+            lines.add("Analysis: none cached yet. Run /ahprofit refresh.");
+        } else {
+            long askBased = analysis.opportunities().stream()
+                    .filter(opportunity -> opportunity.estimate() != null && opportunity.estimate().askBased())
+                    .count();
+            lines.add("Analysis: " + analysis.opportunities().size() + " opportunities, "
+                    + analysis.priceEstimates().size() + " estimates"
+                    + (askBased > 0 ? ", " + askBased + " ask-based" : " (none ask-based)")
+                    + " | listings analysed " + state.listingsAnalyzed());
+        }
+        lines.add("Automation: " + statusLine(config) + " | last decision: " + lastDecision());
+        lines.add("Holdings: " + holdingsSummary());
+        return lines;
+    }
+
     /** One-line status for the HUD and /ahprofit status. */
     public String statusLine(AhProfitConfig config) {
         if (!config.automationEnabled()) {

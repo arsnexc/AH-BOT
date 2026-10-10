@@ -11,6 +11,7 @@ import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemLore;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,6 +61,72 @@ public final class AuctionHouseReader {
             return null;
         }
         return read(client, System.currentTimeMillis());
+    }
+
+    /**
+     * Explains exactly what the mod can see right now, so an unreadable menu can be diagnosed
+     * instead of guessed at. Pure inspection; sends no packets and clicks nothing.
+     */
+    public static List<String> probe(Minecraft client) {
+        List<String> lines = new ArrayList<>();
+        if (client == null || client.player == null || client.level == null) {
+            lines.add("No player or level is loaded.");
+            return lines;
+        }
+        AbstractContainerMenu menu = client.player.containerMenu;
+        lines.add("Open screen: " + (client.screen == null ? "none"
+                : client.screen.getClass().getSimpleName()));
+        if (menu == null) {
+            lines.add("Container menu: none.");
+            return lines;
+        }
+        lines.add("Container menu: " + menu.getClass().getSimpleName() + " (containerId "
+                + menu.containerId + ")");
+        lines.add("Is the player's own inventory menu: " + (menu == client.player.inventoryMenu));
+        String title = "";
+        boolean isContainerScreen = client.screen instanceof AbstractContainerScreen<?>;
+        if (isContainerScreen) {
+            title = ((AbstractContainerScreen<?>) client.screen).getTitle().getString();
+        }
+        lines.add("Screen is a container screen: " + isContainerScreen + " | title: \""
+                + title + "\"");
+        lines.add("AhProfit reads this menu: " + (read(client, System.currentTimeMillis()) != null));
+
+        int containerSlots = 0;
+        int priced = 0;
+        int listed = 0;
+        List<String> samples = new ArrayList<>();
+        for (Slot slot : menu.slots) {
+            if (slot.container == client.player.getInventory()) {
+                continue;
+            }
+            containerSlots++;
+            ItemStack stack = slot.getItem();
+            if (stack.isEmpty()) {
+                continue;
+            }
+            listed++;
+            List<String> lore = lore(stack);
+            BigDecimal price = dev.ahprofit.ah.LorePriceParser.findPrice(lore, displayName(stack));
+            if (price != null) {
+                priced++;
+            }
+            if (samples.size() < 4) {
+                samples.add("  slot " + slot.index + " " + itemId(stack) + " x" + stack.getCount()
+                        + " | lore lines: " + lore.size()
+                        + (price == null ? " | NO PRICE FOUND" : " | price " + price));
+                for (String line : lore) {
+                    samples.add("      | " + line);
+                }
+            }
+        }
+        lines.add("Non-inventory slots: " + containerSlots + ", holding items: " + listed
+                + ", with a readable price: " + priced);
+        if (listed == 0) {
+            lines.add("No items are visible in the container right now; open an auction page first.");
+        }
+        lines.addAll(samples);
+        return lines;
     }
 
     public static boolean isAuctionHouseOpen(Minecraft client) {

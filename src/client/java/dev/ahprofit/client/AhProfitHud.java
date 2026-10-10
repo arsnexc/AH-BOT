@@ -3,6 +3,7 @@ package dev.ahprofit.client;
 import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
 import dev.ahprofit.client.ah.AuctionAutomationService;
+import dev.ahprofit.client.ah.AuctionHouseRecorder;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.MarketAnalysis;
@@ -30,13 +31,15 @@ public final class AhProfitHud {
     private static volatile long lastTextRefreshMillis;
     private static volatile List<HudLine> cachedLines = List.of();
     private static volatile AuctionAutomationService automation;
+    private static volatile AuctionHouseRecorder recorder;
 
     private AhProfitHud() {
     }
 
     public static void register(ScannerService scanner, dev.ahprofit.config.ConfigManager configManager,
-                                AuctionAutomationService automationService) {
+                                AuctionAutomationService automationService, AuctionHouseRecorder recorderService) {
         automation = automationService;
+        recorder = recorderService;
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, AhProfitClient.id("market_hud"),
                 (graphics, deltaTracker) -> render(graphics, scanner, configManager));
     }
@@ -81,6 +84,9 @@ public final class AhProfitHud {
         int headingColor = stale || !snapshot.apiStatus().hasUsableData() ? 0xFFFFC857 : 0xFF70E0A0;
         lines.add(new HudLine("AhProfit READ-ONLY | " + snapshot.apiStatus().name() + " | data " + freshness, headingColor));
         lines.add(new HudLine(automationStatus(config), config.automationEnabled() ? 0xFF9BD8FF : 0xFFB9C3D0));
+        if (recorder != null && recorder.isRecording()) {
+            lines.add(new HudLine(recorderStatus(), 0xFF9BD8FF));
+        }
 
         BankrollLimits bankroll = BankrollManager.calculate(config, nowMillis);
         lines.add(new HudLine("Balance " + (bankroll.balanceConfigured() ? shortMoney(bankroll.balance()) : "NOT SET")
@@ -151,6 +157,19 @@ public final class AhProfitHud {
         AuctionAutomationService service = automation;
         return service == null ? "AH automation OFF (never clicks; /ahprofit ah on to enable)"
                 : service.statusLine(config);
+    }
+
+    /** Shows the harvester's live state, so recording is never a silent black box. */
+    private static String recorderStatus() {
+        AuctionHouseRecorder service = recorder;
+        if (service == null) {
+            return "AH recorder off";
+        }
+        if (!service.isRecording()) {
+            return "AH recorder off (/ahprofit ah record on)";
+        }
+        return "AH recorder ON: " + service.bufferedCount() + " listings"
+                + (service.outputExists() ? " written" : " buffered, not written yet");
     }
 
     private static String shortMoney(BigDecimal value) {

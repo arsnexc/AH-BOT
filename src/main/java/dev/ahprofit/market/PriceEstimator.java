@@ -1,0 +1,207 @@
+package dev.ahprofit.market;
+
+import dev.ahprofit.api.AuctionListing;
+import dev.ahprofit.api.CompletedSale;
+import dev.ahprofit.util.Money;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+/** Robust, completed-sales-first resale-price estimator. Active asks only cap, never establish, value. */
+public final class PriceEstimator {
+    private static final long DAY_MILLIS = Duration.ofDays(1).toMillis();
+    private static final long SEVEN_DAYS_MILLIS = Duration.ofDays(7).toMillis();
+    private static final long HALF_LIFE_MILLIS = Duration.ofHours(36).toMillis();
+    private static final BigDecimal ZERO = BigDecimal.ZERO;
+
+    public PriceEstimate estimate(AuctionListing candidate, List<CompletedSale> allSales,
+                                  List<AuctionListing> activeListings, long nowMillis,
+                                  int minimumEvidence, int maximumListingAgeSeconds) {
+        String fingerprint = candidate.fingerprint().value();
+        if (!candidate.fingerprint().comparable()) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "item attributes are incomplete; this variant is not compared with other listings");
+        }
+
+        long sevenDayStart = nowMillis - SEVEN_DAYS_MILLIS;
+        long dayStart = nowMillis - DAY_MILLIS;
+        List<CompletedSale> sales7d = allSales.stream()
+                .filter(sale -> sale.fingerprint().comparable())
+                .filter(sale -> sale.fingerprint().value().equals(fingerprint))
+                .filter(sale -> sale.soldAtMillis() >= sevenDayStart && sale.soldAtMillis() <= nowMillis)
+                .sorted(Comparator.comparingLong(CompletedSale::soldAtMillis))
+                .toList();
+        List<CompletedSale> sales24h = sales7d.stream()
+                .filter(sale -> sale.soldAtMillis() >= dayStart)
+                .toList();
+
+        if (sales7d.isEmpty()) {
+            return PriceEstimate.noEvidence(fingerprint, "no comparable completed sales in the last seven days");
+        }
+
+        List<BigDecimal> prices7d = sales7d.stream().map(CompletedSale::unitPrice).toList();
+        BigDecimal median7d = median(prices7d);
+        BigDecimal median24h = sales24h.size() >= 3
+                ? median(sales24h.stream().map(CompletedSale::unitPrice).toList())
+                : null;
+        BigDecimal mad = medianAbsoluteDeviation(prices7d, median7d);
+        BigDecimal volatility = median7d.signum() == 0 ? BigDecimal.ONE
+                : Money.divide(mad, median7d).max(BigDecimal.ZERO);
+
+        BigDecimal weightedRecent = weightedMedian(sales7d, median7d, mad, nowMillis);
+        BigDecimal conservative = weightedRecent.min(median7d);
+        BigDecimal trendPercent = null;
+        if (median24h != null) {
+            conservative = conservative.min(median24h);
+            trendPercent = Money.divide(median24h.subtract(median7d), median7d)
+                    .multiply(new BigDecimal("100"), MathContext.DECIMAL128);
+        }
+
+        Competition competition = competition(candidate, activeListings, nowMillis, maximumListingAgeSeconds);
+        BigDecimal lowestAsk = competition.lowestUnitPrice();
+        if (lowestAsk != null) {
+            conservative = conservative.min(lowestAsk);
+        }
+
+        long latestSale = sales7d.getLast().soldAtMillis();
+        double hoursSinceLast = Math.max(0, nowMillis - latestSale) / (double) Duration.ofHours(1).toMillis();
+        double sampleFactor = Math.min(1.0, Math.sqrt(sales7d.size() / 12.0));
+        double recencyFactor = Math.exp(-hoursSinceLast / 72.0);
+        double volatilityFactor = 1.0 / (1.0 + 2.0 * volatility.doubleValue());
+        double competitionFactor = 1.0 / (1.0 + (double) competition.listingCount() / Math.max(1, sales7d.size()));
+        double confidence = clamp(sampleFactor * recencyFactor * volatilityFactor * competitionFactor, 0, 1);
+        boolean sufficientEvidence = sales7d.size() >= minimumEvidence;
+        if (!sufficientEvidence) {
+            confidence = Math.min(confidence, 0.39);
+        }
+
+        BigDecimal unitVolume = sales7d.stream()
+                .map(sale -> BigDecimal.valueOf(sale.quantity()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .divide(BigDecimal.valueOf(7), MathContext.DECIMAL128);
+        BigDecimal visibleSupply = competition.quantity().add(BigDecimal.valueOf(candidate.quantity()));
+        double daysToClear = unitVolume.signum() == 0
+                ? Double.POSITIVE_INFINITY
+                : Money.divide(visibleSupply, unitVolume).doubleValue();
+
+        LiquidityLevel liquidity = liquidityLevel(sales7d.size(), sales24h.size(), competition.listingCount());
+        List<String> flags = new ArrayList<>();
+        if (!sufficientEvidence) {
+            flags.add("insufficient comparable sales (< " + minimumEvidence + " in seven days)");
+        }
+        if (hoursSinceLast > 72) {
+            flags.add("last comparable sale is over 72 hours old");
+        }
+        if (volatility.compareTo(new BigDecimal("0.35")) >= 0) {
+            flags.add("high historical volatility");
+        }
+        if (competition.listingCount() >= Math.max(5, sales7d.size())) {
+            flags.add("heavy active-listing competition");
+        }
+        if (median24h == null) {
+            flags.add("fewer than three comparable sales in 24 hours");
+        }
+        return new PriceEstimate(fingerprint, median24h, median7d, conservative, trendPercent, volatility,
+                sales24h.size(), sales7d.size(), latestSale, unitVolume, competition.listingCount(),
+                competition.quantity(), lowestAsk, daysToClear, confidence, liquidity,
+                sufficientEvidence, flags);
+    }
+
+    private static Competition competition(AuctionListing candidate, List<AuctionListing> listings,
+                                          long nowMillis, int maxAgeSeconds) {
+        BigDecimal lowest = null;
+        BigDecimal quantity = BigDecimal.ZERO;
+        int count = 0;
+        long oldestAllowed = nowMillis - Duration.ofSeconds(maxAgeSeconds).toMillis();
+        for (AuctionListing listing : listings) {
+            if (listing.listingKey().equals(candidate.listingKey())
+                    || !listing.fingerprint().comparable()
+                    || !listing.fingerprint().value().equals(candidate.fingerprint().value())
+                    || listing.observedAtMillis() < oldestAllowed
+                    || listing.expiresAtMillis() <= nowMillis) {
+                continue;
+            }
+            count++;
+            quantity = quantity.add(BigDecimal.valueOf(listing.quantity()));
+            if (lowest == null || listing.unitPrice().compareTo(lowest) < 0) {
+                lowest = listing.unitPrice();
+            }
+        }
+        return new Competition(lowest, quantity, count);
+    }
+
+    private static BigDecimal weightedMedian(List<CompletedSale> sales, BigDecimal median, BigDecimal mad, long nowMillis) {
+        BigDecimal tolerance = mad.multiply(new BigDecimal("4.5"), MathContext.DECIMAL128);
+        if (tolerance.signum() == 0) {
+            tolerance = median.multiply(new BigDecimal("0.10"), MathContext.DECIMAL128);
+        }
+        BigDecimal lower = median.subtract(tolerance).max(BigDecimal.ZERO);
+        BigDecimal upper = median.add(tolerance);
+        List<WeightedPrice> weighted = new ArrayList<>(sales.size());
+        double totalWeight = 0;
+        for (CompletedSale sale : sales) {
+            BigDecimal clipped = sale.unitPrice().max(lower).min(upper);
+            double age = Math.max(0, nowMillis - sale.soldAtMillis());
+            double weight = Math.pow(0.5, age / HALF_LIFE_MILLIS);
+            weighted.add(new WeightedPrice(clipped, weight));
+            totalWeight += weight;
+        }
+        weighted.sort(Comparator.comparing(WeightedPrice::price));
+        double target = totalWeight / 2.0;
+        double cumulative = 0;
+        for (WeightedPrice price : weighted) {
+            cumulative += price.weight();
+            if (cumulative >= target) {
+                return price.price();
+            }
+        }
+        return weighted.getLast().price();
+    }
+
+    public static BigDecimal median(List<BigDecimal> values) {
+        if (values == null || values.isEmpty()) {
+            throw new IllegalArgumentException("Median requires at least one value.");
+        }
+        List<BigDecimal> sorted = values.stream().sorted().toList();
+        int middle = sorted.size() / 2;
+        if (sorted.size() % 2 == 1) {
+            return sorted.get(middle);
+        }
+        return sorted.get(middle - 1).add(sorted.get(middle), MathContext.DECIMAL128)
+                .divide(new BigDecimal("2"), MathContext.DECIMAL128);
+    }
+
+    private static BigDecimal medianAbsoluteDeviation(List<BigDecimal> values, BigDecimal median) {
+        List<BigDecimal> deviations = values.stream()
+                .map(value -> value.subtract(median).abs())
+                .toList();
+        return median(deviations);
+    }
+
+    private static LiquidityLevel liquidityLevel(int sales7d, int sales24h, int competitionCount) {
+        if (sales7d >= 15 && sales24h >= 2 && competitionCount <= sales7d) {
+            return LiquidityLevel.HIGH;
+        }
+        if (sales7d >= 5 && (sales24h >= 1 || sales7d >= 10)) {
+            return LiquidityLevel.MEDIUM;
+        }
+        if (sales7d == 0) {
+            return LiquidityLevel.UNKNOWN;
+        }
+        return LiquidityLevel.LOW;
+    }
+
+    private static double clamp(double value, double minimum, double maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    private record WeightedPrice(BigDecimal price, double weight) {
+    }
+
+    private record Competition(BigDecimal lowestUnitPrice, BigDecimal quantity, int listingCount) {
+    }
+}

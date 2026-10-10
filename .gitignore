@@ -1,0 +1,11 @@
+.gradle/
+build/
+run/
+.idea/
+.vscode/
+*.log
+*.db
+*.db-shm
+*.db-wal
+/config/ahprofit/
+.DS_Store

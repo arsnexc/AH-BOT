@@ -154,7 +154,7 @@ public final class OpportunityEngine {
     private static double score(BigDecimal netProfit, BigDecimal roiPercent, PriceEstimate estimate,
                                 AuctionListing listing, BankrollLimits bankroll, long nowMillis,
                                 long maximumListingAgeMillis) {
-        double profitDenominator = bankroll.balance().multiply(new BigDecimal("0.10"), MathContext.DECIMAL128)
+        BigDecimal profitDenominator = bankroll.balance().multiply(new BigDecimal("0.10"), MathContext.DECIMAL128)
                 .max(bankroll.minimumProfitThreshold());
         double normalizedProfit = Money.divide(netProfit, profitDenominator).doubleValue();
         double profitScore = clamp(normalizedProfit, 0, 1);

@@ -36,11 +36,13 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter:${project.junit_version}"
 }
 
+def projectVersion = project.version.toString()
+
 processResources {
-    inputs.property "version", project.version
+    inputs.property "version", projectVersion
 
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand "version": projectVersion
     }
 }
 
@@ -63,9 +65,10 @@ java {
 }
 
 jar {
-    inputs.property "projectName", project.name
+    def projectName = project.name
+    inputs.property "projectName", projectName
     from("LICENSE") {
-        rename { "${it}_${project.name}" }
+        rename { "${it}_${projectName}" }
     }
 }
 

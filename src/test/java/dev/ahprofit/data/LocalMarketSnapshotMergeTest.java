@@ -26,13 +26,19 @@ class LocalMarketSnapshotMergeTest {
         long older = System.currentTimeMillis() - 600_000L;
         long newer = System.currentTimeMillis();
         ApiItem diamond = TestMarketFixtures.item("minecraft:diamond", 64);
-        AuctionListing shared = TestMarketFixtures.listing(diamond, "128000", older, "shared");
+        // A listing key includes its expiry, so the same listing seen later must be rebuilt with an
+        // identical key and only a newer observation time, or it is genuinely a different listing.
+        AuctionListing sharedOld = TestMarketFixtures.listing(diamond, "128000", older, "shared");
+        AuctionListing sharedNew = new AuctionListing(sharedOld.listingKey(), sharedOld.item(),
+                sharedOld.fingerprint(), sharedOld.totalPrice(), sharedOld.unitPrice(), sharedOld.sellerName(),
+                sharedOld.sellerId(), sharedOld.expiresAtMillis() - newer, newer, sharedOld.expiresAtMillis(),
+                sharedOld.sourcePage());
         AuctionListing onlyOlder = TestMarketFixtures.listing(diamond, "64000", older, "only-older");
         AuctionListing onlyNewer = TestMarketFixtures.listing(diamond, "192000", newer, "only-newer");
         CompletedSale sale = TestMarketFixtures.sale(diamond, "2000", older, "buyer", 1);
 
-        LocalMarketSnapshot first = new LocalMarketSnapshot(older, List.of(shared, onlyOlder), List.of(sale));
-        LocalMarketSnapshot second = new LocalMarketSnapshot(newer, List.of(shared, onlyNewer), List.of());
+        LocalMarketSnapshot first = new LocalMarketSnapshot(older, List.of(sharedOld, onlyOlder), List.of(sale));
+        LocalMarketSnapshot second = new LocalMarketSnapshot(newer, List.of(sharedNew, onlyNewer), List.of());
 
         LocalMarketSnapshot merged = first.merge(second);
 
@@ -42,7 +48,7 @@ class LocalMarketSnapshotMergeTest {
         assertTrue(merged.listings().stream().anyMatch(listing -> listing.listingKey().equals(onlyNewer.listingKey())));
         // The newer observation wins for a shared listing key, so its freshness is the honest one.
         assertEquals(newer, merged.listings().stream()
-                .filter(listing -> listing.listingKey().equals(shared.listingKey()))
+                .filter(listing -> listing.listingKey().equals(sharedOld.listingKey()))
                 .findFirst().orElseThrow().observedAtMillis());
     }
 

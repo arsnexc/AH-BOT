@@ -102,7 +102,8 @@ Settings and defaults live in `config/ahprofit/settings.json`; `config/ahprofit.
 | Component | Project target |
 | --- | --- |
 | Minecraft | `1.21.11` |
-| Java bytecode / runtime | Java `21` |
+| Java bytecode / game runtime | Java `21` |
+| Java build toolchain | Java `25` (used by Fabric's 1.21.11 template) |
 | Fabric Loader | `0.19.5` or newer |
 | Fabric API | `0.141.6+1.21.11` |
 | Fabric Loom | `1.18-SNAPSHOT` |
@@ -110,7 +111,7 @@ Settings and defaults live in `config/ahprofit/settings.json`; `config/ahprofit.
 | SQLite JDBC | `3.53.4.0` (nested in the mod JAR) |
 | JUnit Jupiter | `6.1.3` |
 
-Build on a machine with the matching Java 21 toolchain and normal access to the Gradle, Fabric, Mojang, and Maven artifact repositories:
+Run Gradle with Java 25 (as in Fabric's 1.21.11 template); the compiled mod targets Java 21. Gradle also needs normal access to the Fabric, Mojang, and Maven artifact repositories:
 
 ```sh
 ./gradlew test
@@ -127,7 +128,7 @@ The GitHub Actions workflow at `.github/workflows/build.yml` runs tests and buil
 
 ### Verification
 
-GitHub Actions runs `./gradlew --no-daemon clean test build` with Java 21 for pushes, pull requests, and manual dispatches. A successful run uploads the remapped runtime JAR; the workflow does not launch a live Minecraft client. Local builds require the Gradle, Fabric, Mojang, and Maven artifact repositories described above.
+GitHub Actions runs `./gradlew --no-daemon clean test build` with Java 25 (Loom's build runtime); the resulting mod targets Java 21. This runs on pushes, pull requests, and manual dispatches. A successful run uploads the remapped runtime JAR; the workflow does not launch a live Minecraft client. Local builds require the Gradle, Fabric, Mojang, and Maven artifact repositories described above.
 
 Before release, install the resulting JAR in a Fabric 1.21.11 client, verify `/ahprofit` command behavior and HUD rendering in-game, and confirm the packaged JAR contains the nested SQLite JDBC library but no `credentials.json` or API key.
 

@@ -105,6 +105,7 @@ These use Fabric's **client command API**, are registered locally, and execute o
 | `/ahprofit ah sellplan` | Break-even and recommended list price for each holding. |
 | `/ahprofit ah sell` | List the first holding. Refuses to click unless `automationSellSlot` and `automationConfirmSlot` are set. |
 | `/ahprofit askonly on` / `askonly off` | Rank flips by asking-price spread, which works with no completed sales. |
+| `/ahprofit ah probe` | Dump the open menu, raw lore, prices found, scanner state, and why nothing ranked. |
 | `/ahprofit ah limits <per-action> <per-hour>` | Set the spending caps, e.g. `/ahprofit ah limits 500000 5000000`. |
 | `/ahprofit help` | Show quick setup and safety notes. |
 
@@ -192,7 +193,7 @@ Suggested first use:
 /ahprofit ah
 ```
 
-Browse the auction house while recording is on, then `/ahprofit refresh` and `/ahprofit status` to see the ranked flips. `/ahprofit ah` shows the last decision and why, so you can confirm the price parsing matches the real menu before switching to `/ahprofit ah live`.
+Browse the auction house while recording is on, then `/ahprofit refresh` and `/ahprofit status` to see the ranked flips. `/ahprofit ah probe` with the auction house open prints the menu title, how many slots hold items, how many of those had a readable price, and the raw lore lines. It also prints the market-data mode, the scanner status, and — when nothing ranked — exactly which filter dropped each listing. That output is the fastest way to find out whether the menu is unread, the prices are unparsed, the data never arrived, or the analysis produced nothing.
 
 ### When something does not work
 

@@ -151,7 +151,8 @@ public final class PriceEstimator {
         // To resell, the listing must undercut the cheapest rival ask, so that is the ceiling.
         BigDecimal target = lowestCompeting.multiply(BigDecimal.ONE.subtract(
                 Money.divide(undercutPercent, new BigDecimal("100")), MathContext.DECIMAL128), MathContext.DECIMAL128);
-        BigDecimal conservative = target.max(BigDecimal.ONE).stripTrailingZeros();
+        BigDecimal conservative = new BigDecimal(
+                target.max(BigDecimal.ONE).stripTrailingZeros().toPlainString());
 
         double listingFactor = Math.min(1.0, market.size() / (double) Math.max(1, minimumListings * 2));
         double spreadFactor = clamp(Money.divide(spreadPercent, new BigDecimal("50")).doubleValue(), 0, 1);

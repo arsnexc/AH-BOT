@@ -109,9 +109,9 @@ class AskBasedEstimatorTest {
         all.add(candidate);
 
         MarketAnalysis enabled = new OpportunityEngine().analyze(all, List.of(),
-                TestMarketFixtures.bankroll("5000000", now).withAskOnlyAnalysis(true), now, now);
+                TestMarketFixtures.bankroll("2000000", now).withAskOnlyAnalysis(true), now, now);
         MarketAnalysis disabled = new OpportunityEngine().analyze(all, List.of(),
-                TestMarketFixtures.bankroll("5000000", now), now, now);
+                TestMarketFixtures.bankroll("2000000", now), now, now);
 
         assertTrue(disabled.opportunities().isEmpty(), "without sales and without ask-only, nothing qualifies");
         assertEquals(1, enabled.opportunities().size());

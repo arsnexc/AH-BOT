@@ -230,6 +230,7 @@ public final class ConfigManager implements AutoCloseable {
         BigDecimal automationMinimumScore = decimal(json, "automationMinimumScore",
                 defaults.automationMinimumScore(), BigDecimal.ZERO, new BigDecimal("100"), warnings);
         int automationSellSlot = integer(json, "automationSellSlot", defaults.automationSellSlot(), -1, 255, warnings);
+        int automationConfirmSlot = integer(json, "automationConfirmSlot", defaults.automationConfirmSlot(), -1, 255, warnings);
         boolean askOnlyAnalysis = bool(json, "askOnlyAnalysis", defaults.askOnlyAnalysis(), warnings);
         int askMinimumListings = integer(json, "askMinimumListings", defaults.askMinimumListings(), 2, 50, warnings);
         BigDecimal askMinimumSpreadPercent = decimal(json, "askMinimumSpreadPercent",
@@ -245,7 +246,7 @@ public final class ConfigManager implements AutoCloseable {
                 feePercent, riskBuffer, volatilityMultiplier, maxRecommendations, showHud, alerts,
                 categories, excludedItems, marketDataMode, minimumConfidence, maximumDaysToClear,
                 automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
-                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot,
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot, automationConfirmSlot,
                 askOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
@@ -402,6 +403,7 @@ public final class ConfigManager implements AutoCloseable {
         json.addProperty("automationCooldownSeconds", config.automationCooldownSeconds());
         json.addProperty("automationMinimumScore", config.automationMinimumScore().toPlainString());
         json.addProperty("automationSellSlot", config.automationSellSlot());
+        json.addProperty("automationConfirmSlot", config.automationConfirmSlot());
         json.addProperty("askOnlyAnalysis", config.askOnlyAnalysis());
         json.addProperty("askMinimumListings", config.askMinimumListings());
         json.addProperty("askMinimumSpreadPercent", config.askMinimumSpreadPercent().toPlainString());

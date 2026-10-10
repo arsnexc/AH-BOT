@@ -47,6 +47,7 @@ public record AhProfitConfig(
         int automationCooldownSeconds,
         BigDecimal automationMinimumScore,
         int automationSellSlot,
+        int automationConfirmSlot,
         boolean askOnlyAnalysis,
         int askMinimumListings,
         BigDecimal askMinimumSpreadPercent,
@@ -109,6 +110,9 @@ public record AhProfitConfig(
         if (automationSellSlot < -1 || automationSellSlot > 255) {
             automationSellSlot = -1;
         }
+        if (automationConfirmSlot < -1 || automationConfirmSlot > 255) {
+            automationConfirmSlot = -1;
+        }
         if (askMinimumListings < 2 || askMinimumListings > 50) {
             askMinimumListings = 4;
         }
@@ -155,6 +159,7 @@ public record AhProfitConfig(
                 12,
                 10,
                 new BigDecimal("55"),
+                -1,
                 -1,
                 false,
                 4,
@@ -237,7 +242,8 @@ public record AhProfitConfig(
                                 BigDecimal newMinimumScore) {
         return copy(newBalance, balanceUpdatedAt, newReserve, newProfitFloor, newRoi, newMode,
                 newAutomationEnabled, newDryRun, newMaxSpendPerAction, newMaxSpendPerHour,
-                newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, askOnlyAnalysis);
+                newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, askOnlyAnalysis, automationSellSlot, automationConfirmSlot,
+                askMinimumListings, askMinimumSpreadPercent, askUndercutPercent);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
@@ -254,7 +260,7 @@ public record AhProfitConfig(
                 assumedSellingFeePercent, baseRiskBufferPercent, volatilityBufferMultiplier,
                 maxRecommendations, showHud, alertsEnabled, enabledCategories, excludedItems, newMode,
                 minimumConfidence, maximumDaysToClear, newAutomationEnabled, newDryRun, newMaxSpendPerAction,
-                newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, automationSellSlot,
+                newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, automationSellSlot, automationConfirmSlot,
                 newAskOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
         );
     }

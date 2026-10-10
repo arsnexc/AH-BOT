@@ -47,5 +47,6 @@
   "askOnlyAnalysis": false,
   "askMinimumListings": 4,
   "askMinimumSpreadPercent": "35",
-  "askUndercutPercent": "2"
+  "askUndercutPercent": "2",
+  "automationConfirmSlot": -1
 }

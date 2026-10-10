@@ -53,6 +53,15 @@ public final class AuctionHouseReader {
     }
 
     /** True when a container menu other than the player's own inventory is open. */
+    /** Latest reading of the open auction house, or null when none is open. */
+    public static AuctionHouseSnapshot readCurrent() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null) {
+            return null;
+        }
+        return read(client, System.currentTimeMillis());
+    }
+
     public static boolean isAuctionHouseOpen(Minecraft client) {
         return client != null && client.player != null
                 && client.player.containerMenu != null

@@ -6,6 +6,8 @@ import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
 import dev.ahprofit.client.ah.AuctionAutomationService;
 import dev.ahprofit.client.ah.AuctionHouseRecorder;
+import dev.ahprofit.ah.HoldingsTracker;
+import java.util.List;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
 import dev.ahprofit.config.MarketDataMode;
@@ -64,6 +66,12 @@ public final class AhProfitCommands {
                                     .executes(context -> auctionHouse(context, configManager, automation, "live")))
                             .then(ClientCommandManager.literal("stop")
                                     .executes(context -> auctionHouse(context, configManager, automation, "stop")))
+                            .then(ClientCommandManager.literal("holdings")
+                                    .executes(context -> holdings(context, automation)))
+                            .then(ClientCommandManager.literal("sellplan")
+                                    .executes(context -> sellPlan(context, automation)))
+                            .then(ClientCommandManager.literal("sell")
+                                    .executes(context -> sell(context, automation)))
                             .then(ClientCommandManager.literal("record")
                                     .executes(context -> record(context, recorder, null))
                                     .then(ClientCommandManager.argument("mode", StringArgumentType.word())
@@ -116,6 +124,41 @@ public final class AhProfitCommands {
                               ScannerService scanner, ConfigManager configManager,
                               AuctionAutomationService automation, AuctionHouseRecorder recorder) {
         sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation, recorder);
+        return 1;
+    }
+
+    private static int holdings(CommandContext<FabricClientCommandSource> context,
+                                 AuctionAutomationService automation) {
+        List<HoldingsTracker.Holding> bought = automation.holdings();
+        if (bought.isEmpty()) {
+            context.getSource().sendFeedback(Component.literal("Nothing bought this session."));
+            return 1;
+        }
+        context.getSource().sendFeedback(Component.literal("Bought this session (in memory, not a verified inventory):"));
+        for (HoldingsTracker.Holding holding : bought) {
+            context.getSource().sendFeedback(Component.literal("  " + holding.describe()));
+        }
+        return 1;
+    }
+
+    private static int sellPlan(CommandContext<FabricClientCommandSource> context,
+                                 AuctionAutomationService automation) {
+        List<String> lines = automation.sellPlan();
+        if (lines.isEmpty()) {
+            context.getSource().sendFeedback(Component.literal("Nothing to sell; automation has not bought anything this session."));
+            return 1;
+        }
+        context.getSource().sendFeedback(Component.literal("Sell plan (ask-based, never below break-even):"));
+        for (String line : lines) {
+            context.getSource().sendFeedback(Component.literal("  " + line));
+        }
+        return 1;
+    }
+
+    private static int sell(CommandContext<FabricClientCommandSource> context,
+                             AuctionAutomationService automation) {
+        String outcome = automation.beginSell();
+        context.getSource().sendFeedback(Component.literal("AhProfit: " + outcome));
         return 1;
     }
 
@@ -245,7 +288,7 @@ public final class AhProfitCommands {
                 + config.automationMaxActionsPerHour() + " actions, "
                 + Money.format(automation.spendThisHour()) + " of "
                 + Money.format(config.automationMaxSpendPerHour()) + " spent."));
-        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | record [on|off] | limits <per-action> <per-hour>"));
+        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | record [on|off] | holdings | sellplan | sell | limits <per-action> <per-hour>"));
     }
 
     private static int source(CommandContext<FabricClientCommandSource> context,
@@ -407,6 +450,7 @@ public final class AhProfitCommands {
                 + " | last decision: " + automation.lastDecision()));
         source.sendFeedback(Component.literal("AH recorder: " + (recorder.isRecording() ? "RECORDING" : "stopped")
                 + " | " + recorder.status()));
+        source.sendFeedback(Component.literal("Bought this session: " + automation.holdingsSummary()));
 
         MarketAnalysis analysis = state.analysis();
         if (analysis == null) {

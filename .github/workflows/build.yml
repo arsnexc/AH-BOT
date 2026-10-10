@@ -1,0 +1,96 @@
+name: Build AhProfit
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ahprofit-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build Fabric mod
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Java 25 for Fabric Loom
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Run tests and build remapped mod JAR
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon clean test build --stacktrace 2>&1 | tee "$RUNNER_TEMP/ahprofit-gradle.log"
+
+      - name: Summarize Gradle failure
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          log_path = Path(os.environ["RUNNER_TEMP"]) / "ahprofit-gradle.log"
+          lines = log_path.read_text(errors="replace").splitlines() if log_path.exists() else []
+          markers = ("FAILURE:", "What went wrong:", "Execution failed for task", "error:",
+                     "symbol:", "location:", "required:", "found:", "No matching variant",
+                     "Could not resolve", "Could not find", "Could not GET", "Exception", "Caused by:")
+          details = [line.strip() for line in lines if any(marker in line for marker in markers)]
+          for report in sorted(Path("build/test-results/test").glob("TEST-*.xml")):
+              try:
+                  root = ET.parse(report).getroot()
+              except ET.ParseError:
+                  continue
+              for case in root.iter("testcase"):
+                  failure = case.find("failure")
+                  if failure is None:
+                      failure = case.find("error")
+                  if failure is not None:
+                      message = " ".join("".join(failure.itertext()).split())
+                      details.append(f"TEST FAILURE {case.get('classname')}.{case.get('name')}: {message[:1500]}")
+          if not details:
+              details = [line.strip() for line in lines if line.strip()]
+          details = details[-12:]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("### Gradle failure details\n\n```text\n")
+              summary.write("\n".join(details[-30:]) or "No Gradle output was captured.")
+              summary.write("\n```\n")
+          for line in details:
+              escaped = line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=Gradle build failure::{escaped}")
+          PY
+
+      - name: Upload Gradle failure log
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ahprofit-build-log-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/ahprofit-gradle.log
+            build/test-results/test/
+            build/reports/tests/test/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload the mod JAR
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ahprofit-mod-${{ github.sha }}
+          path: |
+            build/libs/ahprofit-*.jar
+            !build/libs/*-sources.jar
+          if-no-files-found: error
+          retention-days: 30

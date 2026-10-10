@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "ahprofit",
+  "version": "${version}",
+  "name": "AhProfit",
+  "description": "A read-only DonutSMP Auction House market scanner and bankroll-aware flip research tool.",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.ahprofit.client.AhProfitClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "license": "MIT"
+}

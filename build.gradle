@@ -1,0 +1,83 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "ahprofit" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    implementation "org.xerial:sqlite-jdbc:${project.sqlite_jdbc_version}"
+    include "org.xerial:sqlite-jdbc:${project.sqlite_jdbc_version}"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:${project.junit_version}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${project.junit_version}"
+}
+
+def projectVersion = project.version.toString()
+
+processResources {
+    inputs.property "version", projectVersion
+
+    filesMatching("fabric.mod.json") {
+        expand "version": projectVersion
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+}
+
+jar {
+    def projectName = project.name
+    inputs.property "projectName", projectName
+    from("LICENSE") {
+        rename { "${it}_${projectName}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            from components.java
+        }
+    }
+}

@@ -123,7 +123,7 @@ The expected remapped runtime artifact is:
 build/libs/ahprofit-1.0.0.jar
 ```
 
-The GitHub Actions workflow at `.github/workflows/build.yml` runs tests and builds this JAR on pushes, pull requests, and manual dispatches. It uploads the runtime mod JAR (not the sources JAR) as an Actions artifact named `ahprofit-mod-<commit SHA>`; download it from the corresponding workflow run's **Artifacts** section.
+The GitHub Actions workflow at `.github/workflows/build.yml` runs tests and builds this JAR on pushes, pull requests, and manual dispatches. It uploads the runtime mod JAR (not the sources JAR) as an Actions artifact named `ahprofit-mod-<commit SHA>`; download it from the corresponding workflow run's **Artifacts** section. If the build fails, it also publishes Gradle error details and a short-lived diagnostic-log artifact.
 
 ### Results in this workspace
 

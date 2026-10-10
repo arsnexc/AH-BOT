@@ -115,11 +115,13 @@ public final class AhProfitHud {
                 }
                 String name = ItemFingerprint.displayName(opportunity.listing().item());
                 BigDecimal resale = opportunity.conservativeResaleRevenue();
+                String basis = opportunity.estimate().askBased() ? "ASK-BASED" : "sale-backed";
                 lines.add(new HudLine(index + ". " + name + " x" + opportunity.listing().quantity()
                         + " ask " + shortMoney(opportunity.listing().totalPrice())
                         + " -> resale <= " + shortMoney(resale)
                         + " | net " + shortMoney(opportunity.estimatedNetProfit())
-                        + " | ROI " + Money.formatPercent(opportunity.roiPercent()), 0xFF8EE6B0));
+                        + " | ROI " + Money.formatPercent(opportunity.roiPercent())
+                        + " | " + basis, opportunity.estimate().askBased() ? 0xFFFFC857 : 0xFF8EE6B0));
                 lines.add(new HudLine("   " + opportunity.estimate().comparableSales7Days() + " sales/7d"
                         + " | " + opportunity.estimate().liquidity().name().toLowerCase(Locale.ROOT)
                         + " | confidence " + Math.round(opportunity.estimate().confidence() * 100) + "%"

@@ -87,7 +87,7 @@ class MarketDatabaseTest {
         PriceEstimate estimate = new PriceEstimate(item.id(), new BigDecimal("250"), new BigDecimal("240"),
                 new BigDecimal("220"), new BigDecimal("4"), new BigDecimal("0.1"),
                 4, 8, sale.soldAtMillis(), new BigDecimal("8"), 2, new BigDecimal("128"),
-                new BigDecimal("200"), 2.0, 0.7, LiquidityLevel.MEDIUM, true, List.of());
+                new BigDecimal("200"), 2.0, 0.7, LiquidityLevel.MEDIUM, true, false, List.of());
 
         try (MarketDatabase database = new MarketDatabase(file)) {
             database.initialize();

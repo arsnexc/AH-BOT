@@ -43,5 +43,9 @@
   "automationMaxActionsPerHour": 12,
   "automationCooldownSeconds": 10,
   "automationMinimumScore": "55",
-  "automationSellSlot": -1
+  "automationSellSlot": -1,
+  "askOnlyAnalysis": false,
+  "askMinimumListings": 4,
+  "askMinimumSpreadPercent": "35",
+  "askUndercutPercent": "2"
 }

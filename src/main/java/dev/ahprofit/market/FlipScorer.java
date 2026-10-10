@@ -107,8 +107,11 @@ public final class FlipScorer {
             case UNKNOWN -> 0.18;
         };
         double competing = Math.max(0.0, estimate.competingQuantity().doubleValue());
-        double dailyUnits = Math.max(1.0, estimate.unitsSoldPerDay().doubleValue());
-        double competitionFactor = 1.0 / (1.0 + competing / dailyUnits);
+        double dailyUnits = estimate.unitsSoldPerDay().doubleValue();
+        // Without any sale velocity there is no basis to penalise supply, so it is not penalised.
+        double competitionFactor = dailyUnits <= 0
+                ? 1.0
+                : 1.0 / (1.0 + competing / Math.max(1.0, dailyUnits));
         double timeFactor = 1.0 / (1.0 + Math.max(0.0, expectedDays) / 7.0);
         return clamp(liquidityBase * competitionFactor * timeFactor, 0.02, 0.95);
     }

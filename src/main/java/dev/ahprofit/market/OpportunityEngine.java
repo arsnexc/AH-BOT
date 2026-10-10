@@ -87,20 +87,40 @@ public final class OpportunityEngine {
 
             List<CompletedSale> exactSales = salesByFingerprint.getOrDefault(listing.fingerprint().value(), List.of());
             List<AuctionListing> exactListings = listingsByFingerprint.getOrDefault(listing.fingerprint().value(), List.of());
-            PriceEstimate estimate = priceEstimator.estimate(listing, exactSales, exactListings, nowMillis,
-                    config.minimumHistoricalTransactions(), config.maxDataAgeSeconds());
+            PriceEstimate estimate;
+            if (config.askOnlyAnalysis() && exactSales.isEmpty()) {
+                estimate = priceEstimator.estimateFromAsks(listing, exactListings, nowMillis,
+                        config.askMinimumListings(), config.askMinimumSpreadPercent(),
+                        config.askUndercutPercent(), config.maxDataAgeSeconds());
+            } else {
+                estimate = priceEstimator.estimate(listing, exactSales, exactListings, nowMillis,
+                        config.minimumHistoricalTransactions(), config.maxDataAgeSeconds());
+            }
             estimates.put(listing.fingerprint().value(), estimate);
-            if (estimate.conservativeUnitPrice() == null || estimate.comparableSales7Days() < config.minimumHistoricalTransactions()) {
+            if (estimate.conservativeUnitPrice() == null) {
                 uncertain++;
                 continue;
             }
-            if (estimate.confidence() < config.minimumConfidence().doubleValue()) {
-                uncertain++;
-                continue;
-            }
-            if (FlipScorer.expectedDaysToSell(estimate) > config.maximumDaysToClear()) {
-                uncertain++;
-                continue;
+            if (estimate.askBased()) {
+                // Ask-based estimates are gated only on the spread being real; sale-count,
+                // confidence, and clearance gates do not apply because there are no sales.
+                if (!estimate.sufficientEvidence()) {
+                    uncertain++;
+                    continue;
+                }
+            } else {
+                if (estimate.comparableSales7Days() < config.minimumHistoricalTransactions()) {
+                    uncertain++;
+                    continue;
+                }
+                if (estimate.confidence() < config.minimumConfidence().doubleValue()) {
+                    uncertain++;
+                    continue;
+                }
+                if (FlipScorer.expectedDaysToSell(estimate) > config.maximumDaysToClear()) {
+                    uncertain++;
+                    continue;
+                }
             }
 
             BigDecimal resaleRevenue = estimate.conservativeUnitPrice().multiply(BigDecimal.valueOf(listing.quantity()), MathContext.DECIMAL128);

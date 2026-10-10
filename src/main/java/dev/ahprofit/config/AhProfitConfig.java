@@ -46,7 +46,11 @@ public record AhProfitConfig(
         int automationMaxActionsPerHour,
         int automationCooldownSeconds,
         BigDecimal automationMinimumScore,
-        int automationSellSlot
+        int automationSellSlot,
+        boolean askOnlyAnalysis,
+        int askMinimumListings,
+        BigDecimal askMinimumSpreadPercent,
+        BigDecimal askUndercutPercent
 ) {
     public AhProfitConfig {
         if (schemaVersion < 1) {
@@ -105,6 +109,11 @@ public record AhProfitConfig(
         if (automationSellSlot < -1 || automationSellSlot > 255) {
             automationSellSlot = -1;
         }
+        if (askMinimumListings < 2 || askMinimumListings > 50) {
+            askMinimumListings = 4;
+        }
+        askMinimumSpreadPercent = boundedPercent(askMinimumSpreadPercent, "askMinimumSpreadPercent", 99);
+        askUndercutPercent = boundedPercent(askUndercutPercent, "askUndercutPercent", 50);
     }
 
     public static AhProfitConfig defaults() {
@@ -146,7 +155,11 @@ public record AhProfitConfig(
                 12,
                 10,
                 new BigDecimal("55"),
-                -1
+                -1,
+                false,
+                4,
+                new BigDecimal("35"),
+                new BigDecimal("2")
         );
     }
 
@@ -184,14 +197,21 @@ public record AhProfitConfig(
                                                int maxActionsPerHour, int cooldownSeconds, BigDecimal minimumScore) {
         return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, minimumProfitFloor, minimumRoiPercent,
                 marketDataMode, automationEnabled, automationDryRun, maxSpendPerAction, maxSpendPerHour,
-                maxActionsPerHour, cooldownSeconds, minimumScore);
+                maxActionsPerHour, cooldownSeconds, minimumScore, askOnlyAnalysis);
+    }
+
+    public AhProfitConfig withAskOnlyAnalysis(boolean value) {
+        return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, minimumProfitFloor, minimumRoiPercent,
+                marketDataMode, automationEnabled, automationDryRun, automationMaxSpendPerAction,
+                automationMaxSpendPerHour, automationMaxActionsPerHour, automationCooldownSeconds,
+                automationMinimumScore, value);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
                                 BigDecimal newProfitFloor, BigDecimal newRoi, MarketDataMode newMode) {
         return copy(newBalance, balanceUpdatedAt, newReserve, newProfitFloor, newRoi, newMode,
                 automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
-                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore);
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, askOnlyAnalysis);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
@@ -199,7 +219,7 @@ public record AhProfitConfig(
                                 boolean newAutomationEnabled) {
         return copy(newBalance, balanceUpdatedAt, newReserve, newProfitFloor, newRoi, newMode,
                 newAutomationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
-                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore);
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, askOnlyAnalysis);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
@@ -207,7 +227,7 @@ public record AhProfitConfig(
                                 boolean newAutomationEnabled, boolean newDryRun) {
         return copy(newBalance, balanceUpdatedAt, newReserve, newProfitFloor, newRoi, newMode,
                 newAutomationEnabled, newDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
-                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore);
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, askOnlyAnalysis);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
@@ -215,6 +235,16 @@ public record AhProfitConfig(
                                 boolean newAutomationEnabled, boolean newDryRun, BigDecimal newMaxSpendPerAction,
                                 BigDecimal newMaxSpendPerHour, int newMaxActionsPerHour, int newCooldownSeconds,
                                 BigDecimal newMinimumScore) {
+        return copy(newBalance, balanceUpdatedAt, newReserve, newProfitFloor, newRoi, newMode,
+                newAutomationEnabled, newDryRun, newMaxSpendPerAction, newMaxSpendPerHour,
+                newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, askOnlyAnalysis);
+    }
+
+    private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
+                                BigDecimal newProfitFloor, BigDecimal newRoi, MarketDataMode newMode,
+                                boolean newAutomationEnabled, boolean newDryRun, BigDecimal newMaxSpendPerAction,
+                                BigDecimal newMaxSpendPerHour, int newMaxActionsPerHour, int newCooldownSeconds,
+                                BigDecimal newMinimumScore, boolean newAskOnlyAnalysis) {
         return new AhProfitConfig(
                 schemaVersion, username, "manual", newBalance, balanceUpdatedAt,
                 reservePercent, newReserve, maxListingBalancePercent, maxListingDeployablePercent,
@@ -224,7 +254,8 @@ public record AhProfitConfig(
                 assumedSellingFeePercent, baseRiskBufferPercent, volatilityBufferMultiplier,
                 maxRecommendations, showHud, alertsEnabled, enabledCategories, excludedItems, newMode,
                 minimumConfidence, maximumDaysToClear, newAutomationEnabled, newDryRun, newMaxSpendPerAction,
-                newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, automationSellSlot
+                newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, automationSellSlot,
+                newAskOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
         );
     }
 

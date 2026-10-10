@@ -66,6 +66,15 @@ public final class AhProfitCommands {
                             .then(ClientCommandManager.literal("limits")
                                     .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                             .executes(context -> auctionLimits(context, scanner, configManager)))))
+                    .then(ClientCommandManager.literal("askonly")
+                            .executes(context -> askOnly(context, configManager, null))
+                            .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                                    .suggests((context, builder) -> {
+                                        builder.suggest("on");
+                                        builder.suggest("off");
+                                        return builder.buildFuture();
+                                    })
+                                    .executes(context -> askOnly(context, configManager, StringArgumentType.getString(context, "mode")))))
                     .then(ClientCommandManager.literal("budget")
                             .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> budget(context, scanner, configManager))))
@@ -97,6 +106,35 @@ public final class AhProfitCommands {
                               ScannerService scanner, ConfigManager configManager,
                               AuctionAutomationService automation) {
         sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation);
+        return 1;
+    }
+
+    private static int askOnly(CommandContext<FabricClientCommandSource> context,
+                               ConfigManager configManager, String mode) {
+        AhProfitConfig current = configManager.get();
+        if (mode == null) {
+            context.getSource().sendFeedback(Component.literal("AhProfit ask-only analysis: "
+                    + (current.askOnlyAnalysis() ? "ON" : "OFF")
+                    + " (needs >= " + current.askMinimumListings() + " comparable listings and a spread of at least "
+                    + Money.formatPercent(current.askMinimumSpreadPercent()) + " below the market median ask)."));
+            return 1;
+        }
+        boolean enabled;
+        if (mode.equalsIgnoreCase("on")) {
+            enabled = true;
+        } else if (mode.equalsIgnoreCase("off")) {
+            enabled = false;
+        } else {
+            return error(context, "Usage: /ahprofit askonly [on|off]");
+        }
+        AhProfitConfig updated = configManager.update(config -> config.withAskOnlyAnalysis(enabled));
+        context.getSource().sendFeedback(Component.literal("AhProfit ask-only analysis "
+                + (enabled ? "ENABLED" : "disabled") + ". Recommendations are derived from active asking prices, "
+                + "not completed sales, so they are weaker evidence than sale-backed flips."));
+        if (enabled) {
+            context.getSource().sendFeedback(Component.literal("This is the key-free path: no API key or Donut+ needed. "
+                    + "Run /ahprofit refresh to re-score, and use /ahprofit ah dryrun before enabling live automation."));
+        }
         return 1;
     }
 
@@ -282,7 +320,7 @@ public final class AhProfitCommands {
     private static int help(CommandContext<FabricClientCommandSource> context) {
         FabricClientCommandSource source = context.getSource();
         source.sendFeedback(Component.literal("/ahprofit — toggle the local, read-only scanner and show its current status."));
-        source.sendFeedback(Component.literal("/ahprofit status | source [auto|api|local] | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | ah [on|off|dryrun|live|stop|limits] | refresh | help"));
+        source.sendFeedback(Component.literal("/ahprofit status | source [auto|api|local] | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | askonly [on|off] | ah [on|off|dryrun|live|stop|limits] | refresh | help"));
         source.sendFeedback(Component.literal("Amounts accept values such as 2000000, 2,000,000, or $2,000,000. Balance is manual and is not fetched from /stats."));
         source.sendFeedback(Component.literal("No key? Auto mode uses config/ahprofit/market-input.json, or force /ahprofit source local. Supply actual listings and completed sales; then /ahprofit refresh."));
         source.sendFeedback(Component.literal("Live API mode still needs a key from /api in credentials.json. Local-file prices are not live API-verified quotes."));

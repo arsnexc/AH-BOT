@@ -16,6 +16,8 @@ public final class PriceEstimator {
     private static final long DAY_MILLIS = Duration.ofDays(1).toMillis();
     private static final long SEVEN_DAYS_MILLIS = Duration.ofDays(7).toMillis();
     private static final long HALF_LIFE_MILLIS = Duration.ofHours(36).toMillis();
+    /** Ask-based estimates have no sale velocity, so clearance is unknown rather than infinite. */
+    private static final double UNKNOWN_CLEARANCE_DAYS = 7.0;
     private static final BigDecimal ZERO = BigDecimal.ZERO;
 
     public PriceEstimate estimate(AuctionListing candidate, List<CompletedSale> allSales,
@@ -108,7 +110,94 @@ public final class PriceEstimator {
         return new PriceEstimate(fingerprint, median24h, median7d, conservative, trendPercent, volatility,
                 sales24h.size(), sales7d.size(), latestSale, unitVolume, competition.listingCount(),
                 competition.quantity(), lowestAsk, daysToClear, confidence, liquidity,
-                sufficientEvidence, flags);
+                sufficientEvidence, false, flags);
+    }
+
+    /**
+     * Values a candidate from the asking prices of comparable listings instead of completed sales.
+     *
+     * <p>This is the key-free path: with no API key there are no completed sales, so the only
+     * available signal is how far a listing undercuts the rest of the market for the same variant.
+     * The result is explicitly marked ask-based so it is never presented as sale evidence.
+     */
+    public PriceEstimate estimateFromAsks(AuctionListing candidate, List<AuctionListing> activeListings,
+                                          long nowMillis, int minimumListings, BigDecimal minimumSpreadPercent,
+                                          BigDecimal undercutPercent, int maximumListingAgeSeconds) {
+        String fingerprint = candidate.fingerprint().value();
+        if (!candidate.fingerprint().comparable()) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "item attributes are incomplete; this variant is not compared with other listings");
+        }
+
+        List<AuctionListing> market = comparableListings(candidate, activeListings, nowMillis, maximumListingAgeSeconds);
+        if (market.size() + 1 < minimumListings) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "only " + (market.size() + 1) + " comparable listings are visible; at least "
+                            + minimumListings + " are needed to judge an asking-price spread");
+        }
+
+        List<BigDecimal> asks = market.stream().map(AuctionListing::unitPrice).toList();
+        BigDecimal marketMedian = median(asks);
+        BigDecimal lowestCompeting = asks.stream().min(BigDecimal::compareTo).orElse(marketMedian);
+        BigDecimal mad = medianAbsoluteDeviation(asks, marketMedian);
+        BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
+                : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
+
+        BigDecimal candidateUnit = candidate.unitPrice();
+        BigDecimal spreadPercent = Money.divide(marketMedian.subtract(candidateUnit), marketMedian)
+                .multiply(new BigDecimal("100"), MathContext.DECIMAL128);
+        boolean spreadSufficient = spreadPercent.compareTo(minimumSpreadPercent) >= 0;
+
+        // To resell, the listing must undercut the cheapest rival ask, so that is the ceiling.
+        BigDecimal target = lowestCompeting.multiply(BigDecimal.ONE.subtract(
+                Money.divide(undercutPercent, new BigDecimal("100")), MathContext.DECIMAL128), MathContext.DECIMAL128);
+        BigDecimal conservative = target.max(BigDecimal.ONE).stripTrailingZeros();
+
+        double listingFactor = Math.min(1.0, market.size() / (double) Math.max(1, minimumListings * 2));
+        double spreadFactor = clamp(Money.divide(spreadPercent, new BigDecimal("50")).doubleValue(), 0, 1);
+        double dispersionFactor = 1.0 / (1.0 + 2.0 * dispersion.doubleValue());
+        double confidence = clamp(listingFactor * 0.5 + spreadFactor * 0.3 + dispersionFactor * 0.2, 0, 0.85);
+
+        LiquidityLevel liquidity = liquidityLevel(market.size() + 1, market.isEmpty() ? 0 : 1, market.size());
+        BigDecimal visibleSupply = market.stream()
+                .map(listing -> BigDecimal.valueOf(listing.quantity()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .add(BigDecimal.valueOf(candidate.quantity()));
+
+        List<String> flags = new ArrayList<>();
+        flags.add("ASK-BASED estimate: derived from active asking prices, not completed sales");
+        if (!spreadSufficient) {
+            flags.add("asking-price spread " + Money.formatPercent(spreadPercent) + " is below the required "
+                    + Money.formatPercent(minimumSpreadPercent));
+        }
+        if (market.size() < minimumListings * 2) {
+            flags.add("few comparable listings (" + (market.size() + 1) + "), so the market reference is thin");
+        }
+        if (dispersion.compareTo(new BigDecimal("0.35")) >= 0) {
+            flags.add("asking prices for this variant are widely dispersed");
+        }
+
+        return new PriceEstimate(fingerprint, null, marketMedian, conservative, null, dispersion,
+                0, 0, 0, BigDecimal.ZERO, market.size(), visibleSupply, lowestCompeting,
+                UNKNOWN_CLEARANCE_DAYS, confidence, liquidity, spreadSufficient && market.size() + 1 >= minimumListings,
+                true, flags);
+    }
+
+    private static List<AuctionListing> comparableListings(AuctionListing candidate, List<AuctionListing> listings,
+                                                           long nowMillis, int maxAgeSeconds) {
+        long oldestAllowed = nowMillis - Duration.ofSeconds(maxAgeSeconds).toMillis();
+        List<AuctionListing> result = new ArrayList<>();
+        for (AuctionListing listing : listings) {
+            if (listing.listingKey().equals(candidate.listingKey())
+                    || !listing.fingerprint().comparable()
+                    || !listing.fingerprint().value().equals(candidate.fingerprint().value())
+                    || listing.observedAtMillis() < oldestAllowed
+                    || listing.expiresAtMillis() <= nowMillis) {
+                continue;
+            }
+            result.add(listing);
+        }
+        return result;
     }
 
     private static Competition competition(AuctionListing candidate, List<AuctionListing> listings,

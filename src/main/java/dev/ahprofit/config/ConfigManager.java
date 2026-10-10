@@ -225,6 +225,12 @@ public final class ConfigManager implements AutoCloseable {
         BigDecimal automationMinimumScore = decimal(json, "automationMinimumScore",
                 defaults.automationMinimumScore(), BigDecimal.ZERO, new BigDecimal("100"), warnings);
         int automationSellSlot = integer(json, "automationSellSlot", defaults.automationSellSlot(), -1, 255, warnings);
+        boolean askOnlyAnalysis = bool(json, "askOnlyAnalysis", defaults.askOnlyAnalysis(), warnings);
+        int askMinimumListings = integer(json, "askMinimumListings", defaults.askMinimumListings(), 2, 50, warnings);
+        BigDecimal askMinimumSpreadPercent = decimal(json, "askMinimumSpreadPercent",
+                defaults.askMinimumSpreadPercent(), BigDecimal.ZERO, new BigDecimal("99"), warnings);
+        BigDecimal askUndercutPercent = decimal(json, "askUndercutPercent", defaults.askUndercutPercent(),
+                BigDecimal.ZERO, new BigDecimal("50"), warnings);
 
         AhProfitConfig result = new AhProfitConfig(
                 1, username, "manual", balance, balanceUpdated, reservePercent, minimumReserve,
@@ -234,7 +240,8 @@ public final class ConfigManager implements AutoCloseable {
                 feePercent, riskBuffer, volatilityMultiplier, maxRecommendations, showHud, alerts,
                 categories, excludedItems, marketDataMode, minimumConfidence, maximumDaysToClear,
                 automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
-                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot,
+                askOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
     }
@@ -390,6 +397,10 @@ public final class ConfigManager implements AutoCloseable {
         json.addProperty("automationCooldownSeconds", config.automationCooldownSeconds());
         json.addProperty("automationMinimumScore", config.automationMinimumScore().toPlainString());
         json.addProperty("automationSellSlot", config.automationSellSlot());
+        json.addProperty("askOnlyAnalysis", config.askOnlyAnalysis());
+        json.addProperty("askMinimumListings", config.askMinimumListings());
+        json.addProperty("askMinimumSpreadPercent", config.askMinimumSpreadPercent().toPlainString());
+        json.addProperty("askUndercutPercent", config.askUndercutPercent().toPlainString());
         return GSON.toJson(json) + System.lineSeparator();
     }
 

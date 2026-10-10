@@ -36,6 +36,7 @@ class AlertDeduplicatorTest {
                 oldEstimate.latestSaleAtMillis(), oldEstimate.unitsSoldPerDay(), oldEstimate.competingListings(),
                 oldEstimate.competingQuantity(), oldEstimate.lowestCompetingUnitPrice(), oldEstimate.daysToClearProxy(),
                 Math.min(1.0, oldEstimate.confidence() + 0.2), oldEstimate.liquidity(), oldEstimate.sufficientEvidence(),
+                oldEstimate.askBased(),
                 oldEstimate.flags());
         Opportunity changed = new Opportunity(original.listing(), changedEstimate, original.conservativeResaleRevenue(),
                 original.assumedSellingFee(), original.riskBuffer(), original.estimatedNetProfit(), original.roiPercent(),

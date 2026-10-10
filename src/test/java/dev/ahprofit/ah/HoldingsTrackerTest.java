@@ -65,10 +65,10 @@ class HoldingsTrackerTest {
         BigDecimal rival = new BigDecimal("2200");
         BigDecimal undercut = new BigDecimal("2");
 
-        // 2200 * 0.98 * 64 = 138,112, well above the 128,000 break-even.
+        // 2200 * 0.98 * 64 = 137,984, well above the 128,000 break-even.
         BigDecimal target = HoldingsTracker.recommendedAskBasedListPrice(rival, 64, undercut, holding);
 
-        assertEquals(0, new BigDecimal("138112").compareTo(target));
+        assertEquals(0, new BigDecimal("137984").compareTo(target));
     }
 
     @Test

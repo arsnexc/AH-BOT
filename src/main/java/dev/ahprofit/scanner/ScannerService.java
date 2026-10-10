@@ -19,7 +19,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
@@ -348,7 +351,7 @@ public final class ScannerService implements AutoCloseable {
             return;
         }
         try {
-            LocalMarketSnapshot input = localDataSource.load(System.currentTimeMillis());
+            LocalMarketSnapshot input = loadMergedLocalInput();
             if (!isCurrent(taskGeneration, oneShot)) {
                 return;
             }
@@ -384,6 +387,30 @@ public final class ScannerService implements AutoCloseable {
                 notifyOnTransition(ApiStatus.LOCAL_ERROR, message);
             }
         }
+    }
+
+    /**
+     * Loads the manual snapshot and anything recorded from the live auction-house menu, merging
+     * them. Each record keeps its own observation time, so stale manual listings stay stale.
+     */
+    private LocalMarketSnapshot loadMergedLocalInput() throws IOException {
+        long now = System.currentTimeMillis();
+        LocalMarketSnapshot manual = loadIfPresent(configManager.marketInputPath(), "market-input.json", now);
+        LocalMarketSnapshot recorded = loadIfPresent(configManager.observedAuctionPath(), "ah-observed.json", now);
+        if (manual == null && recorded == null) {
+            throw new NoSuchFileException(configManager.marketInputPath().toString());
+        }
+        if (manual == null) {
+            return recorded;
+        }
+        return manual.merge(recorded);
+    }
+
+    private LocalMarketSnapshot loadIfPresent(Path path, String label, long nowMillis) throws IOException {
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        return new LocalMarketDataSource(path, label).load(nowMillis);
     }
 
     private boolean prepareDatabase(MarketStore store, long nowMillis) {

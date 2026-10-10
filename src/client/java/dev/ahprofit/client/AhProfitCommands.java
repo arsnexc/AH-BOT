@@ -5,6 +5,7 @@ import com.mojang.brigadier.context.CommandContext;
 import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
 import dev.ahprofit.client.ah.AuctionAutomationService;
+import dev.ahprofit.client.ah.AuctionHouseRecorder;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
 import dev.ahprofit.config.MarketDataMode;
@@ -33,7 +34,7 @@ public final class AhProfitCommands {
     }
 
     public static void register(ScannerService scanner, ConfigManager configManager,
-                                AuctionAutomationService automation) {
+                                AuctionAutomationService automation, AuctionHouseRecorder recorder) {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
             dispatcher.register(ClientCommandManager.literal("ahprofit")
                     .executes(context -> toggle(context, scanner, configManager))
@@ -63,6 +64,15 @@ public final class AhProfitCommands {
                                     .executes(context -> auctionHouse(context, configManager, automation, "live")))
                             .then(ClientCommandManager.literal("stop")
                                     .executes(context -> auctionHouse(context, configManager, automation, "stop")))
+                            .then(ClientCommandManager.literal("record")
+                                    .executes(context -> record(context, recorder, null))
+                                    .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                                            .suggests((context, builder) -> {
+                                                builder.suggest("on");
+                                                builder.suggest("off");
+                                                return builder.buildFuture();
+                                            })
+                                            .executes(context -> record(context, recorder, StringArgumentType.getString(context, "mode")))))
                             .then(ClientCommandManager.literal("limits")
                                     .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                             .executes(context -> auctionLimits(context, scanner, configManager)))))
@@ -105,8 +115,29 @@ public final class AhProfitCommands {
     private static int status(CommandContext<FabricClientCommandSource> context,
                               ScannerService scanner, ConfigManager configManager,
                               AuctionAutomationService automation) {
-        sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation);
+        sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation, recorder);
         return 1;
+    }
+
+    private static int record(CommandContext<FabricClientCommandSource> context,
+                              AuctionHouseRecorder recorder, String mode) {
+        if (mode == null) {
+            context.getSource().sendFeedback(Component.literal("AhProfit AH recorder: "
+                    + (recorder.isRecording() ? "RECORDING" : "stopped") + " | " + recorder.status()));
+            return 1;
+        }
+        if (mode.equalsIgnoreCase("on")) {
+            recorder.start();
+            context.getSource().sendFeedback(Component.literal("AhProfit is now recording the auction-house listings you open. "
+                    + "It only reads the menu and writes config/ahprofit/ah-observed.json; it never clicks anything."));
+            return 1;
+        }
+        if (mode.equalsIgnoreCase("off")) {
+            recorder.stop();
+            context.getSource().sendFeedback(Component.literal("AhProfit stopped recording auction-house listings."));
+            return 1;
+        }
+        return error(context, "Usage: /ahprofit ah record [on|off]");
     }
 
     private static int askOnly(CommandContext<FabricClientCommandSource> context,
@@ -214,7 +245,7 @@ public final class AhProfitCommands {
                 + config.automationMaxActionsPerHour() + " actions, "
                 + Money.format(automation.spendThisHour()) + " of "
                 + Money.format(config.automationMaxSpendPerHour()) + " spent."));
-        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | limits <per-action> <per-hour>"));
+        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | record [on|off] | limits <per-action> <per-hour>"));
     }
 
     private static int source(CommandContext<FabricClientCommandSource> context,
@@ -353,7 +384,7 @@ public final class AhProfitCommands {
     }
 
     private static void sendFullStatus(FabricClientCommandSource source, ScannerSnapshot state, AhProfitConfig config,
-                                       AuctionAutomationService automation) {
+                                       AuctionAutomationService automation, AuctionHouseRecorder recorder) {
         long now = System.currentTimeMillis();
         BankrollLimits limits = BankrollManager.calculate(config, now);
         source.sendFeedback(Component.literal("AhProfit scanner: " + (state.running() ? "RUNNING" : "STOPPED")
@@ -374,6 +405,8 @@ public final class AhProfitCommands {
                 + " | minimum net profit " + Money.format(limits.minimumProfitThreshold())));
         source.sendFeedback(Component.literal("Auction house: " + automation.statusLine(config)
                 + " | last decision: " + automation.lastDecision()));
+        source.sendFeedback(Component.literal("AH recorder: " + (recorder.isRecording() ? "RECORDING" : "stopped")
+                + " | " + recorder.status()));
 
         MarketAnalysis analysis = state.analysis();
         if (analysis == null) {

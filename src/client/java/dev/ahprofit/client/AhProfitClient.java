@@ -2,6 +2,7 @@ package dev.ahprofit.client;
 
 import dev.ahprofit.api.DonutApiClient;
 import dev.ahprofit.client.ah.AuctionAutomationService;
+import dev.ahprofit.client.ah.AuctionHouseRecorder;
 import dev.ahprofit.config.ConfigManager;
 import dev.ahprofit.database.MarketDatabase;
 import dev.ahprofit.market.OpportunityEngine;
@@ -24,6 +25,7 @@ public final class AhProfitClient implements ClientModInitializer {
     private static ConfigManager configManager;
     private static ScannerService scannerService;
     private static AuctionAutomationService automationService;
+    private static AuctionHouseRecorder recorder;
 
     @Override
     public void onInitializeClient() {
@@ -35,11 +37,15 @@ public final class AhProfitClient implements ClientModInitializer {
         DonutApiClient apiClient = new DonutApiClient(configManager::apiKeyForRequest);
         scannerService = new ScannerService(configManager, database, apiClient, new OpportunityEngine(), AhProfitClient::notifyPlayer);
         automationService = new AuctionAutomationService(scannerService, configManager);
+        recorder = new AuctionHouseRecorder(configManager.observedAuctionPath(), scannerService);
 
-        AhProfitCommands.register(scannerService, configManager, automationService);
+        AhProfitCommands.register(scannerService, configManager, automationService, recorder);
         AhProfitHud.register(scannerService, configManager, automationService);
 
-        ClientTickEvents.END_CLIENT_TICK.register(client -> automationService.onClientTick(client));
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            automationService.onClientTick(client);
+            recorder.onClientTick(client);
+        });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             scannerService.close();
@@ -73,6 +79,10 @@ public final class AhProfitClient implements ClientModInitializer {
             }
         }
         return safe;
+    }
+
+    public static AuctionHouseRecorder recorder() {
+        return recorder;
     }
 
     public static ScannerService scanner() {

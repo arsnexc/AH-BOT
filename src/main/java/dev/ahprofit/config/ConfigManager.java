@@ -110,6 +110,11 @@ public final class ConfigManager implements AutoCloseable {
         return directory.resolve("local-market.sqlite");
     }
 
+    /** Live listings recorded from the open auction-house menu; merged with the manual input. */
+    public Path observedAuctionPath() {
+        return directory.resolve("ah-observed.json");
+    }
+
     /** Used only by the pinned DonutSMP HTTPS transport; never include this value in status or logs. */
     public String apiKeyForRequest() {
         return apiKey.get();

@@ -30,29 +30,35 @@ public final class LocalMarketDataSource {
     private static final int MAX_NESTING = 32;
 
     private final Path inputFile;
+    private final String label;
 
     public LocalMarketDataSource(Path inputFile) {
+        this(inputFile, "market-input.json");
+    }
+
+    public LocalMarketDataSource(Path inputFile, String label) {
         this.inputFile = java.util.Objects.requireNonNull(inputFile, "inputFile");
+        this.label = label == null || label.isBlank() ? "market-input.json" : label;
     }
 
     public LocalMarketSnapshot load(long nowMillis) throws IOException {
         BasicFileAttributes attributes = Files.readAttributes(inputFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         if (!attributes.isRegularFile()) {
-            throw new IOException("market-input.json must be a regular file, not a symbolic link or directory.");
+            throw new IOException(label + " must be a regular file, not a symbolic link or directory.");
         }
         if (attributes.size() > MAX_BYTES) {
-            throw new IOException("market-input.json exceeds the 4 MiB input limit.");
+            throw new IOException(label + " exceeds the 4 MiB input limit.");
         }
         byte[] bytes;
         try (InputStream input = Files.newInputStream(inputFile, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
             bytes = input.readNBytes(MAX_BYTES + 1);
         }
         if (bytes.length > MAX_BYTES) {
-            throw new IOException("market-input.json exceeds the 4 MiB input limit.");
+            throw new IOException(label + " exceeds the 4 MiB input limit.");
         }
         String content = new String(bytes, StandardCharsets.UTF_8);
         if (!JsonSafety.hasSafeNesting(content, MAX_NESTING)) {
-            throw new IOException("market-input.json has invalid or excessive JSON nesting (maximum 32 levels).");
+            throw new IOException(label + " has invalid or excessive JSON nesting (maximum 32 levels).");
         }
 
         try {
@@ -90,7 +96,7 @@ public final class LocalMarketDataSource {
             return new LocalMarketSnapshot(observedAt, List.copyOf(listings.values()), List.copyOf(sales.values()));
         } catch (JsonParseException | IllegalStateException | IllegalArgumentException exception) {
             // Do not echo arbitrary input or parser exceptions that may contain private file contents.
-            throw new IOException("Invalid market-input.json. Check schemaVersion, timestamps, arrays, items, sellers, and numeric prices; the last valid local snapshot was kept.");
+            throw new IOException("Invalid " + label + ". Check schemaVersion, timestamps, arrays, items, sellers, and numeric prices; the last valid local snapshot was kept.");
         }
     }
 

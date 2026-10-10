@@ -35,7 +35,8 @@ public record AhProfitConfig(
         boolean showHud,
         boolean alertsEnabled,
         Set<ItemCategory> enabledCategories,
-        Set<String> excludedItems
+        Set<String> excludedItems,
+        MarketDataMode marketDataMode
 ) {
     public AhProfitConfig {
         if (schemaVersion < 1) {
@@ -43,6 +44,7 @@ public record AhProfitConfig(
         }
         username = username == null ? "" : username.trim();
         balanceMode = "manual";
+        marketDataMode = marketDataMode == null ? MarketDataMode.AUTO : marketDataMode;
         manualBalance = nonNegative(manualBalance, "manualBalance");
         reservePercent = boundedPercent(reservePercent, "reservePercent", 100);
         minimumReserve = nonNegative(minimumReserve, "minimumReserve");
@@ -107,28 +109,33 @@ public record AhProfitConfig(
                 true,
                 true,
                 EnumSet.allOf(ItemCategory.class),
-                Set.of()
+                Set.of(),
+                MarketDataMode.AUTO
         );
     }
 
     public AhProfitConfig withManualBalance(BigDecimal value, long updatedAtMillis) {
-        return copy(value, updatedAtMillis, minimumReserve, minimumProfitFloor, minimumRoiPercent);
+        return copy(value, updatedAtMillis, minimumReserve, minimumProfitFloor, minimumRoiPercent, marketDataMode);
     }
 
     public AhProfitConfig withMinimumReserve(BigDecimal value) {
-        return copy(manualBalance, manualBalanceUpdatedAtMillis, value, minimumProfitFloor, minimumRoiPercent);
+        return copy(manualBalance, manualBalanceUpdatedAtMillis, value, minimumProfitFloor, minimumRoiPercent, marketDataMode);
     }
 
     public AhProfitConfig withMinimumProfitFloor(BigDecimal value) {
-        return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, value, minimumRoiPercent);
+        return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, value, minimumRoiPercent, marketDataMode);
     }
 
     public AhProfitConfig withMinimumRoiPercent(BigDecimal value) {
-        return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, minimumProfitFloor, value);
+        return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, minimumProfitFloor, value, marketDataMode);
+    }
+
+    public AhProfitConfig withMarketDataMode(MarketDataMode value) {
+        return copy(manualBalance, manualBalanceUpdatedAtMillis, minimumReserve, minimumProfitFloor, minimumRoiPercent, value);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
-                                BigDecimal newProfitFloor, BigDecimal newRoi) {
+                                BigDecimal newProfitFloor, BigDecimal newRoi, MarketDataMode newMode) {
         return new AhProfitConfig(
                 schemaVersion, username, "manual", newBalance, balanceUpdatedAt,
                 reservePercent, newReserve, maxListingBalancePercent, maxListingDeployablePercent,
@@ -136,7 +143,7 @@ public record AhProfitConfig(
                 pollIntervalSeconds, newRoi, minimumDiscountPercent, newProfitFloor,
                 minimumProfitBalancePercent, minimumHistoricalTransactions, maxDataAgeSeconds,
                 assumedSellingFeePercent, baseRiskBufferPercent, volatilityBufferMultiplier,
-                maxRecommendations, showHud, alertsEnabled, enabledCategories, excludedItems
+                maxRecommendations, showHud, alertsEnabled, enabledCategories, excludedItems, newMode
         );
     }
 

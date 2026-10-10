@@ -7,6 +7,9 @@ import dev.ahprofit.api.DonutApiException;
 import dev.ahprofit.api.ParsedPage;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
+import dev.ahprofit.config.MarketDataMode;
+import dev.ahprofit.data.LocalMarketDataSource;
+import dev.ahprofit.data.LocalMarketSnapshot;
 import dev.ahprofit.database.MarketDatabase;
 import dev.ahprofit.market.MarketAnalysis;
 import dev.ahprofit.market.Opportunity;
@@ -16,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.file.NoSuchFileException;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
@@ -40,6 +44,9 @@ public final class ScannerService implements AutoCloseable {
 
     private final ConfigManager configManager;
     private final MarketDatabase database;
+    private final MarketStore apiStore;
+    private final MarketStore localStore;
+    private final LocalMarketDataSource localDataSource;
     private final DonutApiClient apiClient;
     private final OpportunityEngine opportunityEngine;
     private final Consumer<String> playerNotice;
@@ -53,10 +60,7 @@ public final class ScannerService implements AutoCloseable {
 
     private volatile ScheduledFuture<?> scanTask;
     private volatile Future<?> manualTask;
-    private volatile boolean databaseInitialized;
     private volatile boolean authenticationBlocked;
-    private volatile long nextDatabaseRetryAtMillis;
-    private volatile long nextDatabaseMaintenanceAtMillis;
     private volatile long backoffUntilMillis;
     private volatile long lastManualRefreshAtMillis;
     private volatile long lastMalformedNoticeAtMillis;
@@ -73,6 +77,9 @@ public final class ScannerService implements AutoCloseable {
                           Consumer<String> playerNotice) {
         this.configManager = java.util.Objects.requireNonNull(configManager, "configManager");
         this.database = java.util.Objects.requireNonNull(database, "database");
+        this.apiStore = new MarketStore(database);
+        this.localStore = new MarketStore(new MarketDatabase(configManager.localMarketDatabasePath()));
+        this.localDataSource = new LocalMarketDataSource(configManager.marketInputPath());
         this.apiClient = java.util.Objects.requireNonNull(apiClient, "apiClient");
         this.opportunityEngine = java.util.Objects.requireNonNull(opportunityEngine, "opportunityEngine");
         this.playerNotice = playerNotice == null ? ignored -> { } : playerNotice;
@@ -91,6 +98,44 @@ public final class ScannerService implements AutoCloseable {
 
     public ScannerSnapshot snapshot() {
         return snapshot.get();
+    }
+
+    public boolean isUsingLocalData() {
+        return configManager.get().marketDataMode().usesLocalData(!configManager.apiKeyForRequest().isBlank());
+    }
+
+    private MarketStore activeStore() {
+        return isUsingLocalData() ? localStore : apiStore;
+    }
+
+    /** Invalidate in-flight work and clear the displayed analysis before changing isolated data stores. */
+    public boolean setMarketDataMode(MarketDataMode mode) {
+        java.util.Objects.requireNonNull(mode, "mode");
+        synchronized (lifecycleLock) {
+            if (closed.get()) {
+                return false;
+            }
+            boolean resume = running.get();
+            running.set(false);
+            generation.incrementAndGet();
+            if (scanTask != null) {
+                scanTask.cancel(true);
+                scanTask = null;
+            }
+            if (manualTask != null) {
+                manualTask.cancel(true);
+                manualTask = null;
+            }
+            configManager.update(current -> current.withMarketDataMode(mode));
+            snapshot.set(ScannerSnapshot.initial());
+            // Authentication and upstream rate-limit pauses are deliberately retained for API mode.
+            if (resume) {
+                start();
+            } else {
+                recomputeCached();
+            }
+            return true;
+        }
     }
 
     /** @return true if the new state is running, false if it is stopped. */
@@ -137,7 +182,7 @@ public final class ScannerService implements AutoCloseable {
             ScannerSnapshot previous = snapshot.get();
             ApiStatus retainedStatus = previous.apiStatus() == ApiStatus.STARTING ? ApiStatus.STOPPED : previous.apiStatus();
             updateControlSnapshot(retainedStatus,
-                    "Scanner stopped; no recurring API requests will be made. Last API state is " + retainedStatus + ".", 0);
+                    "Scanner stopped; no recurring market refreshes will be made. Last data state is " + retainedStatus + ".", 0);
             return true;
         }
     }
@@ -154,15 +199,16 @@ public final class ScannerService implements AutoCloseable {
                     return;
                 }
                 long now = System.currentTimeMillis();
-                if (!databaseInitialized && now < nextDatabaseRetryAtMillis) {
+                MarketStore store = activeStore();
+                if (!store.initialized && now < store.nextRetryAtMillis) {
                     updateControlSnapshot(ApiStatus.DATABASE_ERROR,
-                            "Local market database retry is waiting for its backoff window.", nextDatabaseRetryAtMillis);
+                            "Local market database retry is waiting for its backoff window.", store.nextRetryAtMillis);
                     return;
                 }
                 try {
-                    ensureDatabase(now);
+                    ensureDatabase(store, now);
                 } catch (SQLException | IOException | RuntimeException failure) {
-                    markDatabaseUnavailable(failure,
+                    markDatabaseUnavailable(store, failure,
                             "Could not open the local market database while re-scoring cached recommendations.",
                             "Local market database is unavailable; cached recommendations could not be re-scored.",
                             "AhProfit could not load its local market database for a cached re-score; see the client log.",
@@ -170,7 +216,13 @@ public final class ScannerService implements AutoCloseable {
                     return;
                 }
                 ScannerSnapshot current = snapshot.get();
-                publishCached(current.apiStatus(), current.apiMessage(), taskGeneration, true);
+                ApiStatus status = current.apiStatus();
+                String message = current.apiMessage();
+                if (store == localStore && !status.isLocalData()) {
+                    status = ApiStatus.LOCAL_WAITING;
+                    message = "Key-free local cache selected. Use /ahprofit refresh to load market-input.json; no API requests are made.";
+                }
+                publishCached(store, status, message, taskGeneration, true);
             });
         } catch (java.util.concurrent.RejectedExecutionException exception) {
             LOGGER.warn("Cached market re-score was skipped because the scanner is shutting down.");
@@ -194,7 +246,8 @@ public final class ScannerService implements AutoCloseable {
                         return;
                     }
                     boolean wasAuthenticationBlocked = authenticationBlocked;
-                    boolean keyLoaded = configManager.reloadCredentials();
+                    boolean keyLoaded = configManager.get().marketDataMode() != MarketDataMode.LOCAL
+                            && configManager.reloadCredentials();
                     if (keyLoaded && wasAuthenticationBlocked) {
                         authenticationBlocked = false;
                         backoffUntilMillis = 0;
@@ -214,19 +267,11 @@ public final class ScannerService implements AutoCloseable {
             return;
         }
         long now = System.currentTimeMillis();
-        if (!databaseInitialized && now < nextDatabaseRetryAtMillis) {
-            updateControlSnapshot(ApiStatus.DATABASE_ERROR,
-                    "Local market database retry is waiting for its backoff window.", nextDatabaseRetryAtMillis);
+        if (isUsingLocalData()) {
+            runLocalCycle(taskGeneration, oneShot, now);
             return;
         }
-        try {
-            ensureDatabase(now);
-        } catch (SQLException | IOException | RuntimeException exception) {
-            markDatabaseUnavailable(exception,
-                    "Could not open the local market database; the last in-memory snapshot is being preserved.",
-                    "Local market database is unavailable; see the log. API requests are paused until it can be opened.",
-                    "AhProfit could not open its local market database. The last valid recommendations are preserved; see the client log.",
-                    now);
+        if (!prepareDatabase(apiStore, now)) {
             return;
         }
 
@@ -237,10 +282,10 @@ public final class ScannerService implements AutoCloseable {
         }
         if (configManager.apiKeyForRequest().isBlank()) {
             publishCached(ApiStatus.MISSING_KEY,
-                    "No API key is configured. Create one with /api, edit config/ahprofit/credentials.json, then use /ahprofit refresh.",
+                    "API mode needs a key from /api. To work without a key, use /ahprofit source local and supply market-input.json.",
                     taskGeneration, oneShot);
             notifyOnTransition(ApiStatus.MISSING_KEY,
-                    "AhProfit has no DonutSMP API key. Create one with /api, add it to config/ahprofit/credentials.json, then run /ahprofit refresh.");
+                    "AhProfit API mode has no key. Use /ahprofit source local for key-free local data, or configure credentials.json for live API access.");
             return;
         }
         if (now < backoffUntilMillis) {
@@ -298,21 +343,82 @@ public final class ScannerService implements AutoCloseable {
         }
     }
 
-    private void ensureDatabase(long nowMillis) throws SQLException, IOException {
-        if (databaseInitialized) {
-            if (nowMillis >= nextDatabaseMaintenanceAtMillis) {
-                database.pruneOldData(nowMillis);
-                nextDatabaseMaintenanceAtMillis = nowMillis + DATABASE_MAINTENANCE_INTERVAL_MILLIS;
+    private void runLocalCycle(long taskGeneration, boolean oneShot, long nowMillis) {
+        if (!prepareDatabase(localStore, nowMillis)) {
+            return;
+        }
+        try {
+            LocalMarketSnapshot input = localDataSource.load(System.currentTimeMillis());
+            if (!isCurrent(taskGeneration, oneShot)) {
+                return;
+            }
+            long previousObservation = localStore.database.lastSuccessfulFetchMillis();
+            if (input.observedAtMillis() < previousObservation) {
+                throw new IOException("The input predates the last cached local observation. Supply a newer genuine snapshot.");
+            }
+            if (input.observedAtMillis() > previousObservation) {
+                localStore.database.saveLocalSnapshot(input);
+            }
+            publishCached(localStore, ApiStatus.LOCAL,
+                    "Key-free local data from market-input.json; not a live API quote. Re-reading a file never renews its freshness.",
+                    taskGeneration, oneShot);
+        } catch (NoSuchFileException exception) {
+            publishCached(localStore, ApiStatus.LOCAL_WAITING,
+                    "Key-free local mode is ready. Add actual listings and completed sales to config/ahprofit/market-input.json, then /ahprofit refresh. No API requests are made.",
+                    taskGeneration, oneShot);
+            if (isCurrent(taskGeneration, oneShot)) {
+                notifyOnTransition(ApiStatus.LOCAL_WAITING,
+                        "AhProfit is using key-free local data. Supply config/ahprofit/market-input.json and run /ahprofit refresh; bankroll commands and cached analysis remain available.");
+            }
+        } catch (SQLException exception) {
+            markDatabaseUnavailable(localStore, exception,
+                    "Could not persist the local market input; the previous snapshot is preserved.",
+                    "Local market database update failed; the previous snapshot is preserved.",
+                    "AhProfit could not update its key-free local database; see the client log.", System.currentTimeMillis());
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.warn("Local market input was rejected or could not be read; the last valid local snapshot was kept.");
+            String message = exception instanceof IOException ? exception.getMessage()
+                    : "Local market input could not be processed. Check market-input.json; the last valid snapshot was kept.";
+            publishCached(localStore, ApiStatus.LOCAL_ERROR, message, taskGeneration, oneShot);
+            if (isCurrent(taskGeneration, oneShot)) {
+                notifyOnTransition(ApiStatus.LOCAL_ERROR, message);
+            }
+        }
+    }
+
+    private boolean prepareDatabase(MarketStore store, long nowMillis) {
+        if (!store.initialized && nowMillis < store.nextRetryAtMillis) {
+            updateControlSnapshot(ApiStatus.DATABASE_ERROR,
+                    "Selected local market database retry is waiting for its backoff window.", store.nextRetryAtMillis);
+            return false;
+        }
+        try {
+            ensureDatabase(store, nowMillis);
+            return true;
+        } catch (SQLException | IOException | RuntimeException exception) {
+            markDatabaseUnavailable(store, exception,
+                    "Could not open the selected market database; the last in-memory snapshot is being preserved.",
+                    "Selected market database is unavailable; market refreshes are paused until it can be opened.",
+                    "AhProfit could not open its selected market database; see the client log.", nowMillis);
+            return false;
+        }
+    }
+
+    private void ensureDatabase(MarketStore store, long nowMillis) throws SQLException, IOException {
+        if (store.initialized) {
+            if (nowMillis >= store.nextMaintenanceAtMillis) {
+                store.database.pruneOldData(nowMillis);
+                store.nextMaintenanceAtMillis = nowMillis + DATABASE_MAINTENANCE_INTERVAL_MILLIS;
             }
             return;
         }
-        if (nowMillis < nextDatabaseRetryAtMillis) {
+        if (nowMillis < store.nextRetryAtMillis) {
             throw new SQLException("Database retry is waiting for its backoff window.");
         }
-        database.initialize();
-        database.pruneOldData(nowMillis);
-        databaseInitialized = true;
-        nextDatabaseMaintenanceAtMillis = nowMillis + DATABASE_MAINTENANCE_INTERVAL_MILLIS;
+        store.database.initialize();
+        store.database.pruneOldData(nowMillis);
+        store.initialized = true;
+        store.nextMaintenanceAtMillis = nowMillis + DATABASE_MAINTENANCE_INTERVAL_MILLIS;
     }
 
     private boolean fetchListingPage(int page, boolean discovery, long taskGeneration, boolean oneShot)
@@ -478,38 +584,51 @@ public final class ScannerService implements AutoCloseable {
     }
 
     private void publishCached(ApiStatus status, String message, long taskGeneration, boolean oneShot) {
-        if (!isCurrent(taskGeneration, oneShot) || !databaseInitialized) {
+        publishCached(apiStore, status, message, taskGeneration, oneShot);
+    }
+
+    private void publishCached(MarketStore store, ApiStatus status, String message, long taskGeneration, boolean oneShot) {
+        if (!isCurrent(taskGeneration, oneShot) || !store.initialized) {
             return;
         }
         try {
             long now = System.currentTimeMillis();
             AhProfitConfig config = configManager.get();
-            List<AuctionListing> listings = database.loadActiveListings(now, config.maxDataAgeSeconds());
-            List<CompletedSale> sales = database.loadRecentSales(now - Duration.ofDays(7).toMillis(), now);
-            long lastFetch = database.lastSuccessfulFetchMillis();
+            List<AuctionListing> listings = store.database.loadActiveListings(now, config.maxDataAgeSeconds());
+            List<CompletedSale> sales = store.database.loadRecentSales(now - Duration.ofDays(7).toMillis(), now);
+            long lastFetch = store.database.lastSuccessfulFetchMillis();
             MarketAnalysis analysis = opportunityEngine.analyze(listings, sales, config, now, lastFetch);
-            database.savePriceEstimates(analysis.priceEstimates(), now);
+            if (store == localStore) {
+                analysis = analysis.withWarning("Local user-supplied market records, not live API-verified quotes. Check every listing and completed-sale record in-game.");
+            }
+            store.database.savePriceEstimates(analysis.priceEstimates(), now);
             long newestListing = listings.stream().mapToLong(AuctionListing::observedAtMillis).max().orElse(0);
             ScannerSnapshot next = new ScannerSnapshot(running.get(), status, message, lastFetch, newestListing,
                     analysis.analyzedListings(), analysis.opportunities().size(), analysis.economicallyQualifiedListings(),
-                    sales.size(), discoveryPage, historicalTransactionPage, backoffUntilMillis, analysis);
-            snapshot.set(next);
-            maybeAlert(analysis, status, now, config);
+                    sales.size(), store == localStore ? 1 : discoveryPage, store == localStore ? 1 : historicalTransactionPage,
+                    store == localStore ? 0 : backoffUntilMillis, analysis);
+            synchronized (lifecycleLock) {
+                if (!isCurrent(taskGeneration, oneShot)) {
+                    return;
+                }
+                snapshot.set(next);
+                maybeAlert(analysis, status, now, config);
+            }
         } catch (SQLException exception) {
-            markDatabaseUnavailable(exception,
+            markDatabaseUnavailable(store, exception,
                     "Could not rebuild the cached market view; the previous recommendation snapshot is preserved.",
                     "Could not rebuild the cached market view; the previous snapshot is preserved.",
                     "AhProfit could not rebuild cached recommendations from the local database. The previous snapshot is preserved; see the client log.",
                     System.currentTimeMillis());
         } catch (RuntimeException exception) {
             LOGGER.error("Market analysis failed; the previous recommendation snapshot is preserved.", exception);
-            updateControlSnapshot(ApiStatus.OFFLINE,
+            updateControlSnapshot(store == localStore ? ApiStatus.LOCAL_ERROR : ApiStatus.OFFLINE,
                     "Market analysis failed safely; the previous recommendation snapshot is preserved.", backoffUntilMillis);
         }
     }
 
     private void maybeAlert(MarketAnalysis analysis, ApiStatus status, long nowMillis, AhProfitConfig config) {
-        if (!config.alertsEnabled() || status != ApiStatus.CONNECTED
+        if (!config.alertsEnabled() || !status.hasUsableData()
                 || analysis.opportunities().isEmpty()) {
             return;
         }
@@ -517,7 +636,8 @@ public final class ScannerService implements AutoCloseable {
         int count = Math.min(3, alerts.size());
         for (int index = 0; index < count; index++) {
             Opportunity opportunity = alerts.get(index);
-            playerNotice.accept("Potential read-only opportunity (new or materially changed): "
+            playerNotice.accept((status == ApiStatus.LOCAL ? "Potential LOCAL-DATA opportunity" : "Potential read-only opportunity")
+                    + " (new or materially changed): "
                     + dev.ahprofit.market.ItemFingerprint.displayName(opportunity.listing().item())
                     + " at " + Money.format(opportunity.listing().totalPrice()) + ", estimated net "
                     + Money.format(opportunity.estimatedNetProfit()) + " (" + Money.formatPercent(opportunity.roiPercent())
@@ -538,16 +658,25 @@ public final class ScannerService implements AutoCloseable {
 
     private void markDatabaseUnavailable(Exception failure, String logMessage, String statusMessage,
                                          String playerMessage, long nowMillis) {
-        databaseInitialized = false;
-        nextDatabaseRetryAtMillis = nowMillis + Duration.ofMinutes(1).toMillis();
+        markDatabaseUnavailable(apiStore, failure, logMessage, statusMessage, playerMessage, nowMillis);
+    }
+
+    private void markDatabaseUnavailable(MarketStore store, Exception failure, String logMessage, String statusMessage,
+                                         String playerMessage, long nowMillis) {
+        store.initialized = false;
+        store.nextRetryAtMillis = nowMillis + Duration.ofMinutes(1).toMillis();
         try {
-            database.close();
+            store.database.close();
         } catch (SQLException closeFailure) {
             failure.addSuppressed(closeFailure);
         }
         LOGGER.error(logMessage, failure);
-        updateControlSnapshot(ApiStatus.DATABASE_ERROR, statusMessage, nextDatabaseRetryAtMillis);
-        notifyOnTransition(ApiStatus.DATABASE_ERROR, playerMessage);
+        synchronized (lifecycleLock) {
+            if (store == activeStore() && !closed.get()) {
+                updateControlSnapshot(ApiStatus.DATABASE_ERROR, statusMessage, store.nextRetryAtMillis);
+                notifyOnTransition(ApiStatus.DATABASE_ERROR, playerMessage);
+            }
+        }
     }
 
     private void updateControlSnapshot(ApiStatus status, String message, long nextAttemptAtMillis) {
@@ -591,10 +720,23 @@ public final class ScannerService implements AutoCloseable {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
-        try {
-            database.close();
-        } catch (SQLException exception) {
-            LOGGER.warn("Could not close the local market database cleanly.", exception);
+        for (MarketStore store : List.of(apiStore, localStore)) {
+            try {
+                store.database.close();
+            } catch (SQLException exception) {
+                LOGGER.warn("Could not close a local market database cleanly.", exception);
+            }
+        }
+    }
+
+    private static final class MarketStore {
+        private final MarketDatabase database;
+        private boolean initialized;
+        private long nextRetryAtMillis;
+        private long nextMaintenanceAtMillis;
+
+        private MarketStore(MarketDatabase database) {
+            this.database = database;
         }
     }
 

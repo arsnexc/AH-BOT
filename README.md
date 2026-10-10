@@ -1,11 +1,12 @@
 # AhProfit
 
-AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House research. It polls documented public auction-listing and recent-transaction endpoints, keeps a local SQLite history, estimates conservative resale values from completed sales, and ranks hypothetical flips against a manually entered bankroll.
+AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House research. It supports **key-free local market snapshots** and authenticated polling of documented auction-listing and recent-transaction endpoints. It keeps a local SQLite history, estimates conservative resale values from completed sales, and ranks hypothetical flips against a manually entered bankroll.
 
 **It never buys, lists, bids, transfers, clicks auction menus, or sends trade commands.** Recommendations are informational only; every trade is manual and all prices, fees, liquidity estimates, and market conditions must be checked in-game.
 
 ## Features
 
+- Optional key-free local data mode with bounded JSON imports, separate local/API histories, and explicit local-data labeling. No API requests are made in local mode.
 - Background, single-worker polling; no network or database work runs on Minecraft's render/client command thread.
 - Serialized HTTPS requests with a one-second minimum gap, bounded JSON parsing, retry handling, exponential jittered backoff, server `Retry-After` handling, and an explicit manual-refresh cooldown.
 - Local SQLite persistence for active listings, listing observations, completed sales, price estimates, and per-endpoint/page successful-fetch timestamps.
@@ -20,8 +21,8 @@ AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House re
 ## Installation and first run
 
 1. Build the mod (see [Build and verification](#build-and-verification)) and put `build/libs/ahprofit-1.0.0.jar` in the `mods` directory of a Minecraft **1.21.11 client** instance that has Fabric Loader and Fabric API installed.
-2. Start the client once. AhProfit creates `config/ahprofit/settings.json`, `config/ahprofit/credentials.json`, and `config/ahprofit/market.sqlite` inside that game instance's config directory.
-3. In DonutSMP, create an API key using the server's `/api` command. Add it to `config/ahprofit/credentials.json`:
+2. Start the client once. AhProfit creates `config/ahprofit/settings.json` and `config/ahprofit/credentials.json` inside that game instance's config directory. The selected source's market database is created on the first scan/refresh.
+3. **Choose a data source. No API key is required for local mode.** The default `marketDataMode: "auto"` uses local data when no key is configured; see [Key-free local mode](#key-free-local-mode). For live API polling instead, in DonutSMP create an API key using the server's `/api` command. Add it to `config/ahprofit/credentials.json`:
 
    ```json
    {
@@ -39,7 +40,42 @@ AhProfit is a **client-only Fabric mod** for read-only DonutSMP Auction House re
    The balance is stored locally and **is not fetched or verified** by AhProfit. Re-enter it after spending/earning or at least once per day. Unset or stale (over 24 hours old) balances do not produce capital recommendations.
 5. Run `/ahprofit` to start the scanner. It is initially off. Use `/ahprofit status` for freshness, bankroll limits, estimated opportunities, rationale, and risk/data flags. `/ahprofit` or `/ahprofit toggle` stops recurring polling; `/ahprofit refresh` queues one throttled manual refresh without enabling recurring polling.
 
-AhProfit needs a working server-provided API key and live API access to build current market data. Cached records are retained locally between sessions; no cached estimate should be treated as a live quote.
+**The key authenticates DonutSMP's remote API, not AhProfit's local commands.** Deleting the key check would not unlock the remote API. Bankroll controls, the HUD, cached analysis, and recommendations can run without a key using actual local market records. Live API polling still requires a valid server-provided key. Local/imported/cached estimates are not live quotes.
+
+## Key-free local mode
+
+1. Run `/ahprofit source local` to explicitly disable API requests, even if a key is saved. Alternatively, leave the default `auto` mode with no key configured.
+2. Enter a fresh manual balance with `/ahprofit budget <amount>`.
+3. Supply a UTF-8 JSON file at `config/ahprofit/market-input.json` in the game instance. Start from `config/market-input.example.json` in this repository, **replace the illustrative records with actual observations**, and set real epoch-millisecond timestamps. The example's zero observation timestamp is intentionally invalid; it is not seeded into the running mod.
+4. Run `/ahprofit refresh` for one background import, or `/ahprofit` to periodically re-read the file. AhProfit does not obtain or generate this file for you, scrape auction screens, click menus, or invent completed transactions.
+5. Use `/ahprofit status` and the HUD as usual. They explicitly label the data as `LOCAL`, `LOCAL_WAITING` (input file absent), or `LOCAL_ERROR` (invalid/unreadable/older input). An absent file leaves the local bankroll tools and any existing local cache available, not a stream of live listings.
+
+Source selection is persisted in `settings.json` as `marketDataMode`:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` (default) | Authenticated API when a key is configured; local input otherwise. `/ahprofit refresh` reloads credentials in auto/API mode. A rejected configured key is still reported, not silently treated as an authenticated connection. |
+| `local` | Only local input/cache; **zero API requests**, with or without a saved key. |
+| `api` | Original live API polling; missing/rejected keys pause requests. |
+
+Use `/ahprofit source` to inspect the choice, or `/ahprofit source auto`, `/ahprofit source local`, or `/ahprofit source api` to change it. Switching clears the displayed analysis and cancels old scanner work before selecting the other store. It does **not** clear upstream API authentication or rate-limit pauses. If scanning was running, a background refresh starts for the selected source; otherwise use `/ahprofit refresh` to load new input.
+
+### Local snapshot format
+
+The root has four required fields:
+
+- `schemaVersion`: integer `1`.
+- `observedAtMillis`: **actual observation time**, a positive epoch-millisecond integer no later than the current clock. Do not set this to the file-read time just to keep old quotes fresh.
+- `listings`: array of current observed listings. Each uses the same item/seller/price fields as the API: `item`, `seller` (at least `name` or `uuid`), numeric total `price`, and integer `time_left` in milliseconds **at the observation time**. Expiry is calculated from that time, not from import time.
+- `sales`: array of **actual completed sales**, using `item`, numeric total `price`, integer `unixMillisDateSold`, and optional `seller`. Sale timestamps must be positive and no later than `observedAtMillis`. Asking prices, disappeared listings, and hypothetical trades are not completed-sale evidence.
+
+The file is a complete active-listing snapshot, not a delta; a newer empty `listings` array clears local active listings. Completed sales accumulate and deduplicate by stable identity across imports. A record's `price` is the **whole-stack total**, not its unit price. Item variant matching and all existing risk, fee, freshness, sales-count, and bankroll filters remain unchanged; normally at least five exact-variant completed sales are needed. With asks alone, no evidence-backed flip is recommended.
+
+Imports are limited to 4 MiB, 10,000 combined records, and 32 JSON nesting levels. Symbolic-link/non-regular input files, missing fields, invalid records, and unsupported schemas are rejected before writing. Listings, completed sales, and observation timestamps are saved atomically. Use an atomic file replacement when an external tool updates the input to avoid a partially written JSON file.
+
+An input older than the last successful local observation is rejected. Re-reading a snapshot with the same observation timestamp is idempotent: it does not add duplicate sales, apply edited records, extend expiries, or refresh freshness. To apply **genuinely newly observed** data, provide a newer `observedAtMillis`. The usual 300-second default listing-age limit still applies, even if a stale file is imported just now.
+
+Local history lives in `config/ahprofit/local-market.sqlite`; API history remains in `config/ahprofit/market.sqlite`. They are never combined for resale estimates, so user-supplied records cannot silently contaminate the API cache. No demo prices or transactions are automatically loaded, and local records are not verified against DonutSMP.
 
 ## Local commands
 
@@ -47,13 +83,14 @@ These use Fabric's **client command API**, are registered locally, and execute o
 
 | Command | Effect |
 | --- | --- |
-| `/ahprofit` or `/ahprofit toggle` | Toggle recurring background scanning and show the current balance estimate, API state, data freshness, analyzed-listing count, and qualified-opportunity count. |
-| `/ahprofit status` | Show detailed API/cache status, freshness, manual bankroll and caps, hypothetical exposure, top recommendations, evidence, and warnings. |
+| `/ahprofit` or `/ahprofit toggle` | Toggle recurring background scanning and show the current balance estimate, data-source state, data freshness, analyzed-listing count, and qualified-opportunity count. |
+| `/ahprofit source [auto\|api\|local]` | Inspect/change the data source. Local mode needs no key and never contacts the API. |
+| `/ahprofit status` | Show detailed source/cache status, freshness, manual bankroll and caps, hypothetical exposure, top recommendations, evidence, and warnings. |
 | `/ahprofit budget <amount>` | Set the manual balance estimate. Accepts values such as `2000000`, `2,000,000`, or `$2,000,000`. |
 | `/ahprofit reserve <amount>` | Set an additional minimum protected reserve. The percentage reserve still applies; the effective reserve is the greater of the two. |
 | `/ahprofit minprofit <amount>` | Set the absolute net-profit floor. The active floor is the greater of this value and the configured percentage-of-balance floor. |
 | `/ahprofit minroi <percent>` | Set the minimum net ROI percentage, e.g. `25` or `25%`. |
-| `/ahprofit refresh` | Queue a one-shot background refresh, subject to a 15-second local cooldown and any upstream backoff. Does not turn on recurring scans. |
+| `/ahprofit refresh` | Queue a one-shot background refresh/import, subject to a 15-second local cooldown and any applicable upstream API backoff. Does not turn on recurring scans. |
 | `/ahprofit help` | Show quick setup and safety notes. |
 
 A successful balance change re-scores cached records in the background without making an extra API request. A `/ahprofit refresh` is required to refresh market data on demand.
@@ -82,7 +119,7 @@ The remote API controls its own quotas and availability. AhProfit's one-second c
 
 ## Pricing, confidence, and bankroll policy
 
-All calculations use the API's total price and item quantity to derive a unit price; a stack is not compared to a single unit at its total stack price.
+All calculations use the supplied listing/transaction total price and item quantity to derive a unit price; a stack is not compared to a single unit at its total stack price.
 
 - The normal analysis window is the last seven days of cached completed sales, matched by an exact, quantity-independent item fingerprint. At least **5** comparable sales are required by default. A lower-volume estimate is marked low-confidence and cannot qualify.
 - A recency-weighted median is clipped around the seven-day median using the median absolute deviation. The conservative unit value is no higher than the weighted median, seven-day median, or (when at least three sales exist) 24-hour median. The lowest fresh exact-variant active ask may lower that value further.
@@ -93,7 +130,7 @@ All calculations use the API's total price and item quantity to derive a unit pr
 - Let `B` be the manual balance and `D` be deployable capital after reserve. Defaults reserve the greater of **20% of B** and the configured minimum reserve. The max spend for one listing is `min(15% of B, 25% of D)`. The hypothetical portfolio is capped at **50% of D** total, **20% of D** per exact item variant, and **35% of D** per broad category. These independent limits mean the remaining deployable balance is not necessarily fully allocated.
 - The plan ranks up to five candidates. It is a suggestion only: AhProfit does not track inventory/other holdings, reserve capital in-game, or know whether the player has already placed a trade.
 
-Settings and defaults live in `config/ahprofit/settings.json`; `config/ahprofit.example.json` is a reference copy. The API key is separate in `config/ahprofit/credentials.json` (see `config/credentials.example.json`). Local price history is in `config/ahprofit/market.sqlite`. SQLite retains observations and transactions for up to 90 days, prunes old active listings after one day, and analyses only the recent seven-day sales window. The entire config directory is local to the Minecraft game instance; back it up securely if you want to preserve history.
+Settings and defaults live in `config/ahprofit/settings.json`; `config/ahprofit.example.json` is a reference copy. The API key is separate in `config/ahprofit/credentials.json` (see `config/credentials.example.json`). Price history is in `config/ahprofit/market.sqlite` for the API and `config/ahprofit/local-market.sqlite` for local input. SQLite retains observations and transactions for up to 90 days, prunes old active listings after one day, and analyses only the recent seven-day sales window. The entire config directory is local to the Minecraft game instance; back it up securely if you want to preserve history.
 
 ## Build and verification
 
@@ -134,6 +171,7 @@ Before release, install the resulting JAR in a Fabric 1.21.11 client, verify `/a
 
 ## Known limitations
 
+- Key-free mode is local/offline input, not a remote authentication bypass and not automatic in-game auction scraping. Fresh recommendations require genuinely fresh supplied listings and sufficient actual completed-sale records.
 - DonutSMP's API availability, exact market fields, history depth, server-side fees, taxes, sales cancellation/refund semantics, concurrent listings, and actual buyer liquidity cannot be established from a client-side snapshot.
 - Pagination is bounded/discovered rather than a guaranteed snapshot: listings can move while pages are being fetched; the transaction API exposes only pages 1–10; different scan cycles may observe different moments.
 - Item matching is deliberately strict. Unknown custom attributes, missing equipment durability/enchantment/trim fields, or incomplete container contents may suppress otherwise real opportunities rather than risk mixing different items.

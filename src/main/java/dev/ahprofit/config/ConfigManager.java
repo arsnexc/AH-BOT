@@ -102,6 +102,14 @@ public final class ConfigManager implements AutoCloseable {
         return credentialsFile;
     }
 
+    public Path marketInputPath() {
+        return directory.resolve("market-input.json");
+    }
+
+    public Path localMarketDatabasePath() {
+        return directory.resolve("local-market.sqlite");
+    }
+
     /** Used only by the pinned DonutSMP HTTPS transport; never include this value in status or logs. */
     public String apiKeyForRequest() {
         return apiKey.get();
@@ -169,6 +177,14 @@ public final class ConfigManager implements AutoCloseable {
             warnings.add("Only manual balance mode is supported; API statistics are not treated as a verified spendable wallet.");
         }
 
+        MarketDataMode marketDataMode;
+        try {
+            marketDataMode = MarketDataMode.parse(string(json, "marketDataMode", "auto", warnings, 16));
+        } catch (IllegalArgumentException exception) {
+            warnings.add("Invalid setting 'marketDataMode'; auto mode was used.");
+            marketDataMode = MarketDataMode.AUTO;
+        }
+
         BigDecimal balance = decimal(json, "manualBalance", defaults.manualBalance(), BigDecimal.ZERO, MAX_BALANCE, warnings);
         long balanceUpdated = longInteger(json, "manualBalanceUpdatedAtMillis", 0, 0, Long.MAX_VALUE, warnings);
         BigDecimal reservePercent = decimal(json, "reservePercent", defaults.reservePercent(), BigDecimal.ZERO, new BigDecimal("100"), warnings);
@@ -200,7 +216,7 @@ public final class ConfigManager implements AutoCloseable {
                 maxCommodityExposurePercent, maxCategoryExposurePercent, pollInterval, minimumRoi,
                 minimumDiscount, profitFloor, profitBalancePercent, minimumSales, maxDataAge,
                 feePercent, riskBuffer, volatilityMultiplier, maxRecommendations, showHud, alerts,
-                categories, excludedItems
+                categories, excludedItems, marketDataMode
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
     }
@@ -208,7 +224,7 @@ public final class ConfigManager implements AutoCloseable {
     private CredentialLoad loadCredentialsFromDisk() {
         List<String> warnings = new ArrayList<>();
         if (!Files.exists(credentialsFile, LinkOption.NOFOLLOW_LINKS)) {
-            return new CredentialLoad("", List.of("No API key is configured yet. Add one to " + credentialsFile.getFileName() + " after using /api in-game."), true);
+            return new CredentialLoad("", List.of("No API key is configured. Auto mode can use local market-input.json; live API mode needs a key from /api."), true);
         }
         if (Files.isSymbolicLink(credentialsFile)) {
             return new CredentialLoad("", List.of("Refusing to read a symbolic-link credentials file."), false);
@@ -223,7 +239,7 @@ public final class ConfigManager implements AutoCloseable {
             }
             JsonElement keyElement = parsed.getAsJsonObject().get("apiKey");
             if (keyElement == null || keyElement.isJsonNull()) {
-                return new CredentialLoad("", List.of("No DonutSMP API key is configured; add it to credentials.json."), false);
+                return new CredentialLoad("", List.of("No DonutSMP API key is configured; local data mode remains available."), false);
             }
             if (!keyElement.isJsonPrimitive() || !keyElement.getAsJsonPrimitive().isString()) {
                 return new CredentialLoad("", List.of("The credentials apiKey field must be a string; no key was loaded."), false);
@@ -234,7 +250,7 @@ public final class ConfigManager implements AutoCloseable {
             }
             return new CredentialLoad(key, warnings, false);
         } catch (IOException | JsonParseException | IllegalStateException | SecurityException exception) {
-            return new CredentialLoad("", List.of("Could not read credentials.json; API requests are paused."), false);
+            return new CredentialLoad("", List.of("Could not read credentials.json; API requests are paused, but local data mode remains available."), false);
         }
     }
 
@@ -316,6 +332,7 @@ public final class ConfigManager implements AutoCloseable {
         json.addProperty("schemaVersion", 1);
         json.addProperty("username", config.username());
         json.addProperty("balanceMode", "manual");
+        json.addProperty("marketDataMode", config.marketDataMode().configValue());
         json.addProperty("manualBalance", config.manualBalance().toPlainString());
         json.addProperty("manualBalanceUpdatedAtMillis", config.manualBalanceUpdatedAtMillis());
         json.addProperty("reservePercent", config.reservePercent().toPlainString());

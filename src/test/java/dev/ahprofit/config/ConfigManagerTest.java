@@ -43,6 +43,45 @@ class ConfigManagerTest {
     }
 
     @Test
+    void localModePersistsAndSurvivesBankrollCopies() throws Exception {
+        Path directory = temporaryDirectory.resolve("local-settings");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.AUTO, manager.get().marketDataMode());
+            manager.update(current -> current.withMarketDataMode(MarketDataMode.LOCAL)
+                    .withManualBalance(new BigDecimal("100000"), System.currentTimeMillis())
+                    .withMinimumReserve(new BigDecimal("1000"))
+                    .withMinimumProfitFloor(new BigDecimal("500"))
+                    .withMinimumRoiPercent(new BigDecimal("25")));
+            assertEquals(MarketDataMode.LOCAL, manager.get().marketDataMode());
+        }
+        try (ConfigManager reopened = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.LOCAL, reopened.get().marketDataMode());
+            assertTrue(reopened.apiKeyForRequest().isBlank());
+        }
+        assertTrue(Files.readString(directory.resolve("settings.json")).contains("\"marketDataMode\": \"local\""));
+    }
+
+    @Test
+    void legacySettingsDefaultToAutoAndUnknownModesWarn() throws Exception {
+        Path directory = temporaryDirectory.resolve("legacy-settings");
+        Files.createDirectories(directory);
+        Files.writeString(directory.resolve("settings.json"), "{\"schemaVersion\":1}");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.AUTO, manager.get().marketDataMode());
+        }
+        Files.writeString(directory.resolve("settings.json"), "{\"schemaVersion\":1,\"marketDataMode\":\"unknown\"}");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.AUTO, manager.get().marketDataMode());
+            assertTrue(manager.startupWarnings().stream().anyMatch(message -> message.contains("marketDataMode")));
+        }
+        assertTrue(MarketDataMode.AUTO.usesLocalData(false));
+        assertFalse(MarketDataMode.AUTO.usesLocalData(true));
+        assertTrue(MarketDataMode.LOCAL.usesLocalData(true));
+        assertFalse(MarketDataMode.API.usesLocalData(false));
+        assertEquals(MarketDataMode.LOCAL, MarketDataMode.parse("LOCAL"));
+    }
+
+    @Test
     void invalidControlCharactersAreRejectedFromCredentials() throws Exception {
         Path configDirectory = temporaryDirectory.resolve("invalid-key");
         Files.createDirectories(configDirectory);

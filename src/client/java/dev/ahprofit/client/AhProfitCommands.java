@@ -6,6 +6,7 @@ import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
+import dev.ahprofit.config.MarketDataMode;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.LiquidityLevel;
 import dev.ahprofit.market.MarketAnalysis;
@@ -38,6 +39,16 @@ public final class AhProfitCommands {
                             .executes(context -> toggle(context, scanner, configManager)))
                     .then(ClientCommandManager.literal("status")
                             .executes(context -> status(context, scanner, configManager)))
+                    .then(ClientCommandManager.literal("source")
+                            .executes(context -> source(context, scanner, configManager, false))
+                            .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                                    .suggests((context, builder) -> {
+                                        builder.suggest("auto");
+                                        builder.suggest("api");
+                                        builder.suggest("local");
+                                        return builder.buildFuture();
+                                    })
+                                    .executes(context -> source(context, scanner, configManager, true))))
                     .then(ClientCommandManager.literal("budget")
                             .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> budget(context, scanner, configManager))))
@@ -68,6 +79,30 @@ public final class AhProfitCommands {
     private static int status(CommandContext<FabricClientCommandSource> context,
                               ScannerService scanner, ConfigManager configManager) {
         sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get());
+        return 1;
+    }
+
+    private static int source(CommandContext<FabricClientCommandSource> context,
+                              ScannerService scanner, ConfigManager configManager, boolean change) {
+        if (change) {
+            try {
+                MarketDataMode mode = MarketDataMode.parse(StringArgumentType.getString(context, "mode"));
+                if (!scanner.setMarketDataMode(mode)) {
+                    return error(context, "AhProfit is shutting down and cannot change its data source.");
+                }
+            } catch (IllegalArgumentException exception) {
+                return error(context, exception.getMessage());
+            }
+        }
+        context.getSource().sendFeedback(Component.literal("AhProfit source: "
+                + configManager.get().marketDataMode().configValue() + " -> "
+                + (scanner.isUsingLocalData() ? "key-free local data (no API requests)" : "authenticated DonutSMP API")
+                + ". API and local histories are kept separate."));
+        if (change) {
+            context.getSource().sendFeedback(Component.literal(scanner.isRunning()
+                    ? "Displayed analysis cleared; a background refresh is scheduled for the selected source."
+                    : "Displayed analysis cleared; the selected cache is being re-scored. Use /ahprofit refresh to load new market data."));
+        }
         return 1;
     }
 
@@ -150,9 +185,10 @@ public final class AhProfitCommands {
     private static int help(CommandContext<FabricClientCommandSource> context) {
         FabricClientCommandSource source = context.getSource();
         source.sendFeedback(Component.literal("/ahprofit — toggle the local, read-only scanner and show its current status."));
-        source.sendFeedback(Component.literal("/ahprofit status | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | refresh | help"));
+        source.sendFeedback(Component.literal("/ahprofit status | source [auto|api|local] | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | refresh | help"));
         source.sendFeedback(Component.literal("Amounts accept values such as 2000000, 2,000,000, or $2,000,000. Balance is manual and is not fetched from /stats."));
-        source.sendFeedback(Component.literal("Set the API key in config/ahprofit/credentials.json after generating it with /api; then use /ahprofit refresh."));
+        source.sendFeedback(Component.literal("No key? Auto mode uses config/ahprofit/market-input.json, or force /ahprofit source local. Supply actual listings and completed sales; then /ahprofit refresh."));
+        source.sendFeedback(Component.literal("Live API mode still needs a key from /api in credentials.json. Local-file prices are not live API-verified quotes."));
         source.sendFeedback(Component.literal("AhProfit never buys, lists, moves items, clicks menus, or sends trading commands. All trading is manual."));
         return 1;
     }
@@ -162,18 +198,20 @@ public final class AhProfitCommands {
         long now = System.currentTimeMillis();
         BankrollLimits limits = BankrollManager.calculate(config, now);
         String balanceLabel = limits.balanceConfigured() ? Money.format(limits.balance()) + " manual" : "not configured";
-        String apiLabel = state.apiStatus().name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        String dataLabel = state.apiStatus().name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String mode = enabled ? "ON" : "OFF";
         source.sendFeedback(Component.literal("AhProfit " + mode + " | balance " + balanceLabel
                 + (limits.balanceMayBeStale() ? " (stale)" : "")
                 + " | listings analyzed " + state.listingsAnalyzed()
                 + " | qualified opportunities " + state.qualifiedOpportunities()
                 + " | market data " + freshness(state.lastSuccessfulFetchMillis(), now, config.maxDataAgeSeconds())
-                + " | API " + apiLabel));
+                + " | source " + config.marketDataMode().configValue() + " | state " + dataLabel));
         if (!enabled) {
-            source.sendFeedback(Component.literal("No recurring API requests are scheduled. Use /ahprofit status for the last cached analysis."));
+            source.sendFeedback(Component.literal("No recurring market refreshes are scheduled. Use /ahprofit status for the selected cached analysis."));
         } else if (state.apiStatus() == ApiStatus.MISSING_KEY) {
-            source.sendFeedback(Component.literal("API key missing: create it with /api, edit config/ahprofit/credentials.json, then run /ahprofit refresh."));
+            source.sendFeedback(Component.literal("API mode needs a key. Choose /ahprofit source local for key-free files, or configure credentials.json for live API access."));
+        } else if (state.apiStatus() == ApiStatus.LOCAL_WAITING) {
+            source.sendFeedback(Component.literal("Key-free mode: supply config/ahprofit/market-input.json with actual observation timestamps, listings, and completed sales; then /ahprofit refresh."));
         }
     }
 
@@ -181,8 +219,8 @@ public final class AhProfitCommands {
         long now = System.currentTimeMillis();
         BankrollLimits limits = BankrollManager.calculate(config, now);
         source.sendFeedback(Component.literal("AhProfit scanner: " + (state.running() ? "RUNNING" : "STOPPED")
-                + " | API: " + state.apiStatus().name() + " — " + state.apiMessage()));
-        source.sendFeedback(Component.literal("Last successful API fetch: "
+                + " | source: " + config.marketDataMode().configValue() + " | data state: " + state.apiStatus().name() + " — " + state.apiMessage()));
+        source.sendFeedback(Component.literal("Last successful market observation: "
                 + freshness(state.lastSuccessfulFetchMillis(), now, config.maxDataAgeSeconds())
                 + " | last listing observation: " + relativeTime(state.newestListingObservationMillis(), now)));
         source.sendFeedback(Component.literal("Listings analyzed: " + state.listingsAnalyzed()
@@ -254,7 +292,7 @@ public final class AhProfitCommands {
 
     private static String freshness(long timestampMillis, long nowMillis, int maximumAgeSeconds) {
         if (timestampMillis <= 0) {
-            return "never fetched";
+            return "never observed";
         }
         String age = relativeTime(timestampMillis, nowMillis);
         boolean stale = nowMillis - timestampMillis > TimeUnit.SECONDS.toMillis(maximumAgeSeconds);

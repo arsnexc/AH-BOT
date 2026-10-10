@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "observedAtMillis": 0,
+  "listings": [
+    {
+      "item": {
+        "id": "minecraft:diamond",
+        "count": 64
+      },
+      "seller": {
+        "name": "example_seller"
+      },
+      "price": 6400,
+      "time_left": 3600000
+    }
+  ],
+  "sales": [
+    {
+      "item": {
+        "id": "minecraft:diamond",
+        "count": 64
+      },
+      "seller": {
+        "name": "example_seller"
+      },
+      "price": 12800,
+      "unixMillisDateSold": 0
+    }
+  ]
+}

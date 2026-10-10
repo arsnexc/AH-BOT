@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "username": "",
   "balanceMode": "manual",
+  "marketDataMode": "auto",
   "manualBalance": "0",
   "manualBalanceUpdatedAtMillis": 0,
   "reservePercent": "20",

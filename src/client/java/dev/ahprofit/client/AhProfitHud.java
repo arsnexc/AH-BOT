@@ -6,7 +6,6 @@ import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.MarketAnalysis;
 import dev.ahprofit.market.Opportunity;
-import dev.ahprofit.scanner.ApiStatus;
 import dev.ahprofit.scanner.ScannerService;
 import dev.ahprofit.scanner.ScannerSnapshot;
 import dev.ahprofit.util.Money;
@@ -73,10 +72,10 @@ public final class AhProfitHud {
         List<HudLine> lines = new ArrayList<>();
         boolean stale = snapshot.lastSuccessfulFetchMillis() <= 0
                 || nowMillis - snapshot.lastSuccessfulFetchMillis() > config.maxDataAgeSeconds() * 1_000L;
-        String freshness = snapshot.lastSuccessfulFetchMillis() <= 0 ? "never fetched"
+        String freshness = snapshot.lastSuccessfulFetchMillis() <= 0 ? "never observed"
                 : relativeTime(snapshot.lastSuccessfulFetchMillis(), nowMillis) + (stale ? " STALE" : "");
-        int headingColor = stale || snapshot.apiStatus() != ApiStatus.CONNECTED ? 0xFFFFC857 : 0xFF70E0A0;
-        lines.add(new HudLine("AhProfit READ-ONLY | API " + snapshot.apiStatus().name() + " | data " + freshness, headingColor));
+        int headingColor = stale || !snapshot.apiStatus().hasUsableData() ? 0xFFFFC857 : 0xFF70E0A0;
+        lines.add(new HudLine("AhProfit READ-ONLY | " + snapshot.apiStatus().name() + " | data " + freshness, headingColor));
 
         BankrollLimits bankroll = BankrollManager.calculate(config, nowMillis);
         lines.add(new HudLine("Balance " + (bankroll.balanceConfigured() ? shortMoney(bankroll.balance()) : "NOT SET")
@@ -88,6 +87,9 @@ public final class AhProfitHud {
                 + " | qualified " + snapshot.qualifiedOpportunities()
                 + " | uncertain " + (snapshot.analysis() == null ? 0 : snapshot.analysis().skippedUncertainListings()), 0xFFE5EAF0));
 
+        if (snapshot.apiStatus().isLocalData()) {
+            lines.add(new HudLine("LOCAL FILE data, not live quotes | /ahprofit source", 0xFFFFC857));
+        }
         MarketAnalysis analysis = snapshot.analysis();
         if (analysis == null) {
             lines.add(new HudLine("Waiting for the first safe market snapshot. Use /ahprofit status.", 0xFFFFC857));

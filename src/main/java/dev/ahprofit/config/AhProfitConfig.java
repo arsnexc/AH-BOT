@@ -242,8 +242,7 @@ public record AhProfitConfig(
                                 BigDecimal newMinimumScore) {
         return copy(newBalance, balanceUpdatedAt, newReserve, newProfitFloor, newRoi, newMode,
                 newAutomationEnabled, newDryRun, newMaxSpendPerAction, newMaxSpendPerHour,
-                newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, askOnlyAnalysis, automationSellSlot, automationConfirmSlot,
-                askMinimumListings, askMinimumSpreadPercent, askUndercutPercent);
+                newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, askOnlyAnalysis);
     }
 
     private AhProfitConfig copy(BigDecimal newBalance, long balanceUpdatedAt, BigDecimal newReserve,
@@ -260,7 +259,8 @@ public record AhProfitConfig(
                 assumedSellingFeePercent, baseRiskBufferPercent, volatilityBufferMultiplier,
                 maxRecommendations, showHud, alertsEnabled, enabledCategories, excludedItems, newMode,
                 minimumConfidence, maximumDaysToClear, newAutomationEnabled, newDryRun, newMaxSpendPerAction,
-                newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore, automationSellSlot, automationConfirmSlot,
+                newMaxSpendPerHour, newMaxActionsPerHour, newCooldownSeconds, newMinimumScore,
+                automationSellSlot, automationConfirmSlot,
                 newAskOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent
         );
     }

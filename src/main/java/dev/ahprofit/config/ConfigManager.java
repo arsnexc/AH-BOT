@@ -237,6 +237,7 @@ public final class ConfigManager implements AutoCloseable {
                 defaults.askMinimumSpreadPercent(), BigDecimal.ZERO, new BigDecimal("99"), warnings);
         BigDecimal askMinimumRoiPercent = decimal(json, "askMinimumRoiPercent",
                 defaults.askMinimumRoiPercent(), BigDecimal.ZERO, new BigDecimal("1000"), warnings);
+        ServerProfile serverProfile = loadServerProfile(json, defaults.serverProfile(), warnings);
         BigDecimal askUndercutPercent = decimal(json, "askUndercutPercent", defaults.askUndercutPercent(),
                 BigDecimal.ZERO, new BigDecimal("50"), warnings);
 
@@ -250,9 +251,53 @@ public final class ConfigManager implements AutoCloseable {
                 automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
                 automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot, automationConfirmSlot,
                 askOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent,
-                askMinimumRoiPercent
+                askMinimumRoiPercent, serverProfile
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
+    }
+
+    private static ServerProfile loadServerProfile(JsonObject json, ServerProfile defaults,
+                                                   List<String> warnings) {
+        JsonElement element = json.get("serverProfile");
+        if (element == null || !element.isJsonObject()) {
+            return defaults;
+        }
+        JsonObject object = element.getAsJsonObject();
+        String name = string(object, "name", defaults.name(), warnings, 64);
+        String pattern = string(object, "pricePattern", defaults.pricePattern(), warnings, 512);
+        int timeLeft = integer(object, "assumedTimeLeftSeconds", defaults.assumedTimeLeftSeconds(),
+                1, 365 * 24 * 60 * 60, warnings);
+        Set<String> words = new java.util.LinkedHashSet<>();
+        JsonElement wordsElement = object.get("currencyWords");
+        if (wordsElement != null && wordsElement.isJsonArray()) {
+            for (JsonElement word : wordsElement.getAsJsonArray()) {
+                if (word.isJsonPrimitive() && !word.getAsString().isBlank()) {
+                    words.add(word.getAsString().trim().toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        if (words.isEmpty()) {
+            words = defaults.currencyWords();
+        }
+        try {
+            return new ServerProfile(name, words, pattern, timeLeft);
+        } catch (RuntimeException exception) {
+            warnings.add("The server profile was rejected and the defaults were kept: " + exception.getMessage());
+            return defaults;
+        }
+    }
+
+    private static void saveServerProfile(JsonObject json, ServerProfile profile) {
+        JsonObject object = new JsonObject();
+        object.addProperty("name", profile.name());
+        object.addProperty("pricePattern", profile.pricePattern());
+        object.addProperty("assumedTimeLeftSeconds", profile.assumedTimeLeftSeconds());
+        JsonArray words = new JsonArray();
+        for (String word : profile.sortedCurrencyWords()) {
+            words.add(word);
+        }
+        object.add("currencyWords", words);
+        json.add("serverProfile", object);
     }
 
     private CredentialLoad loadCredentialsFromDisk() {
@@ -273,7 +318,7 @@ public final class ConfigManager implements AutoCloseable {
             }
             JsonElement keyElement = parsed.getAsJsonObject().get("apiKey");
             if (keyElement == null || keyElement.isJsonNull()) {
-                return new CredentialLoad("", List.of("No DonutSMP API key is configured; local data mode remains available."), false);
+                return new CredentialLoad("", List.of("No market API key is configured; local data mode remains available."), false);
             }
             if (!keyElement.isJsonPrimitive() || !keyElement.getAsJsonPrimitive().isString()) {
                 return new CredentialLoad("", List.of("The credentials apiKey field must be a string; no key was loaded."), false);
@@ -411,6 +456,7 @@ public final class ConfigManager implements AutoCloseable {
         json.addProperty("askMinimumListings", config.askMinimumListings());
         json.addProperty("askMinimumSpreadPercent", config.askMinimumSpreadPercent().toPlainString());
         json.addProperty("askUndercutPercent", config.askUndercutPercent().toPlainString());
+        saveServerProfile(json, config.serverProfile());
         return GSON.toJson(json) + System.lineSeparator();
     }
 

@@ -212,7 +212,7 @@ public final class OpportunityEngine {
 
             economicallyQualified++;
             List<String> flags = new ArrayList<>(estimate.flags());
-            flags.add("selling-fee planning haircut " + Money.formatPercent(config.assumedSellingFeePercent()) + " is not confirmed by DonutSMP documentation");
+            flags.add("selling-fee planning haircut " + Money.formatPercent(config.assumedSellingFeePercent()) + " is not confirmed by this server's documentation");
             if (bankroll.balanceMayBeStale()) {
                 flags.add("manual balance may be stale");
             }

@@ -47,6 +47,15 @@ public record AuctionEntry(
         return new AuctionEntry(slotIndex, itemId, displayName, count, safeLines, unit, total, total != null);
     }
 
+    /** Builds an entry from a menu slot, reading the price the way this server writes it. */
+    public static AuctionEntry of(int slotIndex, String itemId, String displayName, int count,
+                                  List<String> loreLines, List<String> extraSources,
+                                  dev.ahprofit.config.ServerProfile profile) {
+        List<String> safeLines = loreLines == null ? List.of() : List.copyOf(loreLines);
+        BigDecimal total = LorePriceParser.findPrice(safeLines, displayName, extraSources, profile);
+        return of(slotIndex, itemId, displayName, count, safeLines, total);
+    }
+
     public boolean matchesItem(String wantedItemId, int wantedCount) {
         return count == wantedCount && itemId.equalsIgnoreCase(wantedItemId);
     }

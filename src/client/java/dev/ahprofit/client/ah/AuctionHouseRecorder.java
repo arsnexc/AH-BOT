@@ -6,6 +6,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.ahprofit.ah.AuctionEntry;
 import dev.ahprofit.ah.AuctionHouseSnapshot;
+import dev.ahprofit.config.AhProfitConfig;
+import dev.ahprofit.config.ServerProfile;
 import dev.ahprofit.scanner.ScannerService;
 import net.minecraft.client.Minecraft;
 
@@ -37,7 +39,7 @@ public final class AuctionHouseRecorder {
     private static final long RETENTION_MILLIS = Duration.ofMinutes(10).toMillis();
     private static final long WRITE_INTERVAL_MILLIS = Duration.ofSeconds(5).toMillis();
     private static final int MAX_BUFFERED = 5_000;
-    private static final long ASSUMED_TIME_LEFT_MILLIS = Duration.ofMinutes(10).toMillis();
+    private static final long DEFAULT_TIME_LEFT_MILLIS = Duration.ofMinutes(10).toMillis();
 
     private final Path outputFile;
     private final ScannerService scanner;
@@ -63,7 +65,7 @@ public final class AuctionHouseRecorder {
         tickCounter = 0;
 
         long now = System.currentTimeMillis();
-        AuctionHouseSnapshot snapshot = AuctionHouseReader.read(client, now);
+        AuctionHouseSnapshot snapshot = AuctionHouseReader.read(client, now, profile());
         if (snapshot == null) {
             status.set("Recording; no auction-house menu is open, so nothing new is buffered.");
             return;
@@ -120,7 +122,7 @@ public final class AuctionHouseRecorder {
             record.add("item", item);
             record.add("seller", seller);
             record.addProperty("price", listing.totalPrice());
-            record.addProperty("time_left", ASSUMED_TIME_LEFT_MILLIS);
+            record.addProperty("time_left", assumedTimeLeftMillis());
             listings.add(record);
         }
         root.add("listings", listings);
@@ -167,6 +169,19 @@ public final class AuctionHouseRecorder {
 
     public Path outputPath() {
         return outputFile;
+    }
+
+    /** How long this server's listings live, taken from the configured profile. */
+    private long assumedTimeLeftMillis() {
+        AhProfitConfig config = scanner.config();
+        return config == null
+                ? DEFAULT_TIME_LEFT_MILLIS
+                : Duration.ofSeconds(config.serverProfile().assumedTimeLeftSeconds()).toMillis();
+    }
+
+    private ServerProfile profile() {
+        AhProfitConfig config = scanner.config();
+        return config == null ? null : config.serverProfile();
     }
 
     public boolean outputExists() {

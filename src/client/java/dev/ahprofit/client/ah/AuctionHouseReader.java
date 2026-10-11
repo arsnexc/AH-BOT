@@ -1,6 +1,7 @@
 package dev.ahprofit.client.ah;
 
 import dev.ahprofit.ah.AuctionEntry;
+import dev.ahprofit.config.ServerProfile;
 import dev.ahprofit.ah.LorePriceParser;
 import dev.ahprofit.ah.AuctionHouseSnapshot;
 import net.minecraft.client.Minecraft;
@@ -28,6 +29,12 @@ public final class AuctionHouseReader {
 
     /** @return a snapshot, or null when no third-party container menu is open. */
     public static AuctionHouseSnapshot read(Minecraft client, long nowMillis) {
+        return read(client, nowMillis, null);
+    }
+
+    /** Reads the open menu, interpreting prices with this server's profile. */
+    public static AuctionHouseSnapshot read(Minecraft client, long nowMillis,
+                                            ServerProfile profile) {
         if (client == null || client.player == null || client.level == null) {
             return null;
         }
@@ -52,8 +59,8 @@ public final class AuctionHouseReader {
             }
             List<String> lore = lore(stack);
             String name = displayName(stack);
-            BigDecimal price = LorePriceParser.findPrice(lore, name, priceText(stack, lore, name));
-            entries.add(AuctionEntry.of(slot.index, itemId(stack), name, stack.getCount(), lore, price));
+            entries.add(AuctionEntry.of(slot.index, itemId(stack), name, stack.getCount(), lore,
+                    priceText(stack, lore, name), profile));
         }
         return new AuctionHouseSnapshot(menu.containerId, title, entries, nowMillis);
     }
@@ -94,14 +101,18 @@ public final class AuctionHouseReader {
         return sources;
     }
 
-    /** True when a container menu other than the player's own inventory is open. */
     /** Latest reading of the open auction house, or null when none is open. */
     public static AuctionHouseSnapshot readCurrent() {
+        return readCurrent(null);
+    }
+
+    /** Latest reading of the open auction house, or null when none is open. */
+    public static AuctionHouseSnapshot readCurrent(ServerProfile profile) {
         Minecraft client = Minecraft.getInstance();
         if (client == null) {
             return null;
         }
-        return read(client, System.currentTimeMillis());
+        return read(client, System.currentTimeMillis(), profile);
     }
 
     /**
@@ -109,6 +120,11 @@ public final class AuctionHouseReader {
      * instead of guessed at. Pure inspection; sends no packets and clicks nothing.
      */
     public static List<String> probe(Minecraft client) {
+        return probe(client, null);
+    }
+
+    /** Explains exactly what the mod can see right now, so an unreadable menu can be diagnosed. */
+    public static List<String> probe(Minecraft client, ServerProfile profile) {
         List<String> lines = new ArrayList<>();
         if (client == null || client.player == null || client.level == null) {
             lines.add("No player or level is loaded.");
@@ -131,7 +147,15 @@ public final class AuctionHouseReader {
         }
         lines.add("Screen is a container screen: " + isContainerScreen + " | title: \""
                 + title + "\"");
-        lines.add("AhProfit reads this menu: " + (read(client, System.currentTimeMillis()) != null));
+        lines.add("AhProfit reads this menu: " + (read(client, System.currentTimeMillis(), profile) != null));
+        if (profile != null) {
+            lines.add("Server profile: " + profile.displayName()
+                    + " | currency words " + String.join(", ", profile.sortedCurrencyWords())
+                    + " | assumed listing life " + profile.assumedTimeLeftSeconds() + "s"
+                    + (profile.hasCustomPattern() ? " | custom pattern set" : " | no custom pattern"));
+        } else {
+            lines.add("Server profile: none configured; built-in currency words are used");
+        }
 
         int containerSlots = 0;
         int priced = 0;
@@ -149,7 +173,7 @@ public final class AuctionHouseReader {
             listed++;
             List<String> lore = lore(stack);
             String name = displayName(stack);
-            BigDecimal price = LorePriceParser.findPrice(lore, name, priceText(stack, lore, name));
+            BigDecimal price = LorePriceParser.findPrice(lore, name, priceText(stack, lore, name), profile);
             if (price != null) {
                 priced++;
             }

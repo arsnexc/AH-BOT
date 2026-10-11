@@ -49,5 +49,22 @@
   "askMinimumSpreadPercent": 15,
   "askUndercutPercent": "2",
   "automationConfirmSlot": -1,
-  "askMinimumRoiPercent": 5
+  "askMinimumRoiPercent": 5,
+  "serverProfile": {
+    "name": "",
+    "currencyWords": [
+      "cash",
+      "coins",
+      "credits",
+      "dollars",
+      "emeralds",
+      "gems",
+      "mints",
+      "money",
+      "tokens",
+      "usd"
+    ],
+    "pricePattern": "",
+    "assumedTimeLeftSeconds": 600
+  }
 }

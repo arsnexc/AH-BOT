@@ -51,8 +51,22 @@ public final class LorePriceParser {
     /** "64 x Diamond" or "Diamond x64": a count glued to an item name. */
     private static final Pattern COUNT_GLUE = Pattern.compile("(?i)(?<![a-z0-9])\\d+\\s*x\\b|\\bx\\s*\\d+(?![a-z0-9])");
 
-    /** Currency words and symbols that may sit next to a price. */
-    private static final Pattern CURRENCY = Pattern.compile("(?i)(coins?|money|cash|usd|dollars?|\\$|\\u20ac|\\u00a3)");
+    /** Currency symbols, which every server shares. */
+    private static final Pattern CURRENCY_SYMBOLS = Pattern.compile("\\$|\\u20ac|\\u00a3");
+
+    /** Currency words recognised when no server profile is configured. */
+    private static final Pattern DEFAULT_CURRENCY = Pattern.compile(
+            "(?i)\\b(coins?|money|cash|usd|dollars?|mints?|gems?|tokens?|credits?)\\b");
+
+    /**
+     * A line that is nothing but a number and one word: "64 Diamonds", "5 boxes", "160 mints".
+     *
+     * <p>This is the shape of a quantity line, not a price line, so it is never treated as a price.
+     * It is also what protects the operator: a currency word mistakenly set to an item name would
+     * otherwise turn every stack size into a price.
+     */
+    private static final Pattern COUNT_ONLY_LINE =
+            Pattern.compile("(?i)\\s*[0-9][0-9.,']*\\s*[a-z]+\\s*");
 
     private static final BigDecimal MAXIMUM = new BigDecimal("1000000000000000");
 
@@ -61,17 +75,26 @@ public final class LorePriceParser {
     }
 
     /**
+     * @param profile how this server writes prices; null uses the built-in currency words and no
+     *                custom pattern.
+     */
+    public static BigDecimal findPrice(List<String> lines, dev.ahprofit.config.ServerProfile profile) {
+        return findPrice(lines, null, null, profile);
+    }
+
+    /**
      * @param extraLine an additional line, typically the item's display name, tried after the lore.
      */
     public static BigDecimal findPrice(List<String> lines, String extraLine) {
-        return findPrice(lines, extraLine, null);
+        return findPrice(lines, extraLine, null, null);
     }
 
     /**
      * @param extraLines further text to search, such as custom-data components or a full tooltip.
      *                 Searched after the lore and the display name, before giving up.
      */
-    public static BigDecimal findPrice(List<String> lines, String extraLine, List<String> extraLines) {
+    public static BigDecimal findPrice(List<String> lines, String extraLine, List<String> extraLines,
+                                       dev.ahprofit.config.ServerProfile profile) {
         List<String> cleaned = new java.util.ArrayList<>();
         if (lines != null) {
             for (String line : lines) {
@@ -96,6 +119,30 @@ public final class LorePriceParser {
             return null;
         }
 
+        // 0. A server-supplied pattern is authoritative: the operator knows their own format, so it
+        // is tried before any heuristic and its first capture group is the amount.
+        if (profile != null && profile.hasCustomPattern()) {
+            try {
+                // Lore text mixes case ("Price:", "PRICE", "price"), so the operator's own
+                // pattern is matched case-insensitively like every built-in pattern is.
+                Pattern custom = Pattern.compile(profile.pricePattern(),
+                        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+                for (String line : cleaned) {
+                    Matcher customMatcher = custom.matcher(line);
+                    if (customMatcher.find() && customMatcher.groupCount() >= 1) {
+                        BigDecimal value = toAmount(customMatcher.group(1), null);
+                        if (value != null) {
+                            return value;
+                        }
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // An unusable pattern must not stop the built-in heuristics from running.
+            }
+        }
+
+        Pattern currency = currencyPattern(profile);
+
         // 1. A line that names a price wins, unless it is really a count.
         for (String line : cleaned) {
             if (PRICE_KEYWORD.matcher(line).find() && !COUNT_GLUE.matcher(line).find()) {
@@ -105,12 +152,15 @@ public final class LorePriceParser {
                 }
             }
         }
-        // 2. A line that is essentially just an amount, possibly with a currency marker.
+        // 2. A line carrying an explicit currency marker, which the profile decides.
         for (String line : cleaned) {
             if (QUANTITY_KEYWORD.matcher(line).find() || COUNT_GLUE.matcher(line).find()) {
                 continue;
             }
-            if (!CURRENCY.matcher(line).find()) {
+            if (COUNT_ONLY_LINE.matcher(line).matches()) {
+                continue;
+            }
+            if (!currency.matcher(line).find()) {
                 continue;
             }
             BigDecimal value = lastAmount(line);
@@ -118,20 +168,7 @@ public final class LorePriceParser {
                 return value;
             }
         }
-        // 3. A line carrying an explicit currency marker.
-        for (String line : cleaned) {
-            if (QUANTITY_KEYWORD.matcher(line).find() || COUNT_GLUE.matcher(line).find()) {
-                continue;
-            }
-            if (!CURRENCY.matcher(line).find()) {
-                continue;
-            }
-            BigDecimal value = lastAmount(line);
-            if (value != null) {
-                return value;
-            }
-        }
-        // 4. A line that is essentially only an amount.
+        // 3. A line that is essentially only an amount.
         for (String line : cleaned) {
             if (!BARE_AMOUNT_LINE.matcher(line).matches()) {
                 continue;
@@ -144,6 +181,26 @@ public final class LorePriceParser {
         // Deliberately no final fallback: "64 Diamonds" and "Expires in 2h" must never become a
         // price, because one wrong price silently corrupts every spread computed from it.
         return null;
+    }
+
+    /** The currency matcher for a profile: its words plus the shared symbols. */
+    private static Pattern currencyPattern(dev.ahprofit.config.ServerProfile profile) {
+        if (profile == null) {
+            return DEFAULT_CURRENCY;
+        }
+        StringBuilder words = new StringBuilder();
+        for (String word : profile.currencyWords()) {
+            if (!words.isEmpty()) {
+                words.append('|');
+            }
+            words.append(java.util.regex.Pattern.quote(word));
+        }
+        if (words.isEmpty()) {
+            return DEFAULT_CURRENCY;
+        }
+        // The shared symbols are always accepted, whatever the profile declares, so a server that
+        // writes "$160.00" needs no configuration at all.
+        return Pattern.compile("(?i)\\b(?:" + words + ")\\b|" + CURRENCY_SYMBOLS.pattern());
     }
 
     /** @return the last money-looking amount on the line, or null when none is plausible. */

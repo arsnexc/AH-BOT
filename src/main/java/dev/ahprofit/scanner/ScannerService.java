@@ -103,6 +103,11 @@ public final class ScannerService implements AutoCloseable {
         return snapshot.get();
     }
 
+    /** The live configuration, so client-side readers can honour this server's profile. */
+    public AhProfitConfig config() {
+        return configManager.get();
+    }
+
     public boolean isUsingLocalData() {
         return configManager.get().marketDataMode().usesLocalData(!configManager.apiKeyForRequest().isBlank());
     }

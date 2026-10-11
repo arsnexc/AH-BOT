@@ -11,6 +11,7 @@ import dev.ahprofit.ah.HoldingsTracker;
 import java.util.List;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
+import dev.ahprofit.config.ServerProfile;
 import dev.ahprofit.config.MarketDataMode;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.LiquidityLevel;
@@ -83,10 +84,24 @@ public final class AhProfitCommands {
                                             })
                                             .executes(context -> record(context, recorder, StringArgumentType.getString(context, "mode")))))
                             .then(ClientCommandManager.literal("probe")
-                                    .executes(context -> probe(context, automation, recorder)))
+                                    .executes(context -> probe(context, automation, recorder, configManager)))
                             .then(ClientCommandManager.literal("limits")
                                     .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                             .executes(context -> auctionLimits(context, scanner, configManager)))))
+                    .then(ClientCommandManager.literal("server")
+                            .executes(context -> server(context, configManager))
+                            .then(ClientCommandManager.literal("name")
+                                    .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
+                                            .executes(context -> serverName(context, configManager,
+                                                    StringArgumentType.getString(context, "value")))))
+                            .then(ClientCommandManager.literal("pattern")
+                                    .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
+                                            .executes(context -> serverPattern(context, configManager,
+                                                    StringArgumentType.getString(context, "value")))))
+                            .then(ClientCommandManager.literal("currency")
+                                    .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
+                                            .executes(context -> serverCurrency(context, configManager,
+                                                    StringArgumentType.getString(context, "value"))))))
                     .then(ClientCommandManager.literal("askonly")
                             .executes(context -> askOnly(context, configManager, null))
                             .then(ClientCommandManager.argument("mode", StringArgumentType.word())
@@ -167,9 +182,11 @@ public final class AhProfitCommands {
 
     /** Dumps everything the mod can see, so an unreadable menu is diagnosable rather than guessed at. */
     private static int probe(CommandContext<FabricClientCommandSource> context,
-                             AuctionAutomationService automation, AuctionHouseRecorder recorder) {
+                             AuctionAutomationService automation, AuctionHouseRecorder recorder,
+                             ConfigManager configManager) {
         context.getSource().sendFeedback(Component.literal("--- AhProfit probe ---"));
-        for (String line : AuctionHouseReader.probe(net.minecraft.client.Minecraft.getInstance())) {
+        for (String line : AuctionHouseReader.probe(net.minecraft.client.Minecraft.getInstance(),
+                configManager.get().serverProfile())) {
             context.getSource().sendFeedback(Component.literal(line));
         }
         context.getSource().sendFeedback(Component.literal("Recorder: "
@@ -200,6 +217,76 @@ public final class AhProfitCommands {
             return 1;
         }
         return error(context, "Usage: /ahprofit ah record [on|off]");
+    }
+
+    /** Shows the active server profile, which decides how prices are read. */
+    private static int server(CommandContext<FabricClientCommandSource> context,
+                              ConfigManager configManager) {
+        ServerProfile profile = configManager.get().serverProfile();
+        context.getSource().sendFeedback(Component.literal("AhProfit server profile for "
+                + profile.displayName() + ":"));
+        context.getSource().sendFeedback(Component.literal("  currency words: "
+                + String.join(", ", profile.sortedCurrencyWords())));
+        context.getSource().sendFeedback(Component.literal("  assumed listing life: "
+                + profile.assumedTimeLeftSeconds() + "s"));
+        context.getSource().sendFeedback(Component.literal("  custom price pattern: "
+                + (profile.hasCustomPattern() ? profile.pricePattern() : "none")));
+        context.getSource().sendFeedback(Component.literal("Set it with /ahprofit server name <name>, "
+                + "/ahprofit server pattern <regex with one capture group>, or "
+                + "/ahprofit server currency <comma-separated words>."));
+        return 1;
+    }
+
+    private static int serverName(CommandContext<FabricClientCommandSource> context,
+                                  ConfigManager configManager, String value) {
+        ServerProfile current = configManager.get().serverProfile();
+        configManager.update(config -> config.withServerProfile(
+                new ServerProfile(value, current.currencyWords(), current.pricePattern(),
+                        current.assumedTimeLeftSeconds())));
+        context.getSource().sendFeedback(Component.literal("AhProfit will call this server \""
+                + value.trim() + "\" in its messages."));
+        return 1;
+    }
+
+    private static int serverPattern(CommandContext<FabricClientCommandSource> context,
+                                     ConfigManager configManager, String value) {
+        ServerProfile current = configManager.get().serverProfile();
+        String trimmed = value.trim();
+        try {
+            java.util.regex.Pattern.compile(trimmed);
+        } catch (RuntimeException exception) {
+            return error(context, "That is not a usable regular expression: " + exception.getMessage());
+        }
+        if (!trimmed.contains("(")) {
+            return error(context, "The pattern must contain one capture group around the amount, "
+                    + "for example (?:price|cost)\\s*:?\\s*\\$?([0-9.,]+)");
+        }
+        configManager.update(config -> config.withServerProfile(
+                new ServerProfile(current.name(), current.currencyWords(), trimmed,
+                        current.assumedTimeLeftSeconds())));
+        context.getSource().sendFeedback(Component.literal("AhProfit will read prices with: " + trimmed
+                + " | the first capture group is the amount. Test it with /ahprofit ah probe."));
+        return 1;
+    }
+
+    private static int serverCurrency(CommandContext<FabricClientCommandSource> context,
+                                      ConfigManager configManager, String value) {
+        ServerProfile current = configManager.get().serverProfile();
+        java.util.Set<String> words = new java.util.LinkedHashSet<>();
+        for (String word : value.split("[,;]")) {
+            if (!word.isBlank()) {
+                words.add(word.trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        if (words.isEmpty()) {
+            return error(context, "List at least one currency word, for example mints,cash");
+        }
+        configManager.update(config -> config.withServerProfile(
+                new ServerProfile(current.name(), words, current.pricePattern(),
+                        current.assumedTimeLeftSeconds())));
+        context.getSource().sendFeedback(Component.literal("AhProfit now treats these as currency words: "
+                + String.join(", ", words.stream().sorted().toList())));
+        return 1;
     }
 
     private static int askOnly(CommandContext<FabricClientCommandSource> context,
@@ -307,7 +394,8 @@ public final class AhProfitCommands {
                 + config.automationMaxActionsPerHour() + " actions, "
                 + Money.format(automation.spendThisHour()) + " of "
                 + Money.format(config.automationMaxSpendPerHour()) + " spent."));
-        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | record [on|off] | holdings | sellplan | sell | limits <per-action> <per-hour>"));
+        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | record [on|off] | holdings | sellplan | sell | probe | limits <per-action> <per-hour>"));
+        source.sendFeedback(Component.literal("Server-specific: /ahprofit server name | pattern | currency. Run /ahprofit ah probe if prices do not read."));
     }
 
     private static int source(CommandContext<FabricClientCommandSource> context,
@@ -324,7 +412,7 @@ public final class AhProfitCommands {
         }
         context.getSource().sendFeedback(Component.literal("AhProfit source: "
                 + configManager.get().marketDataMode().configValue() + " -> "
-                + (scanner.isUsingLocalData() ? "key-free local data (no API requests)" : "authenticated DonutSMP API")
+                + (scanner.isUsingLocalData() ? "key-free local data (no API requests)" : "authenticated market API")
                 + ". API and local histories are kept separate."));
         if (change) {
             context.getSource().sendFeedback(Component.literal(scanner.isRunning()
@@ -470,6 +558,10 @@ public final class AhProfitCommands {
         source.sendFeedback(Component.literal("AH recorder: " + (recorder.isRecording() ? "RECORDING" : "stopped")
                 + " | " + recorder.status()));
         source.sendFeedback(Component.literal("Bought this session: " + automation.holdingsSummary()));
+        ServerProfile profile = configManager.get().serverProfile();
+        source.sendFeedback(Component.literal("Server: " + profile.displayName()
+                + " | currency words " + profile.sortedCurrencyWords().size()
+                + (profile.hasCustomPattern() ? " | custom price pattern set" : "")));
 
         MarketAnalysis analysis = state.analysis();
         if (analysis == null) {

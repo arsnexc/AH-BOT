@@ -1,6 +1,8 @@
 # AhProfit
 
-AhProfit is a **client-only Fabric mod** for DonutSMP Auction House research. It supports **key-free local market snapshots**, authenticated polling of documented auction-listing and recent-transaction endpoints, and — only when you explicitly switch it on — auction-house automation with hard spending caps. It keeps a local SQLite history, estimates conservative resale values from completed sales, and ranks flips against a manually entered bankroll.
+AhProfit is a **client-only Fabric mod** for auction-house research. It supports **key-free local market snapshots**, authenticated polling of documented auction-listing and recent-transaction endpoints, and — only when you explicitly switch it on — auction-house automation with hard spending caps. It keeps a local SQLite history, estimates conservative resale values from completed sales, and ranks flips against a manually entered bankroll.
+
+The three key-free paths — the in-game harvester, the asking-price spread analyzer, and automation — are **server-agnostic**: they read whatever auction menu the server opens, so they work on DonutSMP, RemnantSMP, or any server that shows its prices in the open container menu. See [Server profiles](#server-profiles) for the one thing that does differ between servers.
 
 **Auction automation is off by default.** Out of the box AhProfit only reads and advises: it never buys, lists, bids, transfers, clicks auction menus, or sends trade commands. Automation becomes possible only after `/ahprofit ah on`, and even then it obeys per-action, hourly, and action-count ceilings.
 
@@ -105,7 +107,11 @@ These use Fabric's **client command API**, are registered locally, and execute o
 | `/ahprofit ah sellplan` | Break-even and recommended list price for each holding. |
 | `/ahprofit ah sell` | List the first holding. Refuses to click unless `automationSellSlot` and `automationConfirmSlot` are set. |
 | `/ahprofit askonly on` / `askonly off` | Rank flips by asking-price spread, which works with no completed sales. |
-| `/ahprofit ah probe` | Dump the open menu, raw lore, prices found, scanner state, and why nothing ranked. |
+| `/ahprofit ah probe` | Dump the open menu, raw lore, prices found, the active server profile, scanner state, and why nothing ranked. |
+| `/ahprofit server` | Show the active server profile: name, currency words, listing life, custom price pattern. |
+| `/ahprofit server name <name>` | Name used when AhProfit refers to this server. |
+| `/ahprofit server pattern <regex>` | Regular expression with one capture group naming the price, tried before every heuristic. |
+| `/ahprofit server currency <words>` | Comma-separated currency words this server prints, e.g. `mints,cash`. |
 | `/ahprofit ah limits <per-action> <per-hour>` | Set the spending caps, e.g. `/ahprofit ah limits 500000 5000000`. |
 | `/ahprofit help` | Show quick setup and safety notes. |
 
@@ -121,6 +127,34 @@ Ranking uses capital efficiency and risk-adjusted return rather than raw profit,
 - **weakest point** — the largest scoring penalty, so you can see why a flip ranks where it does.
 
 Two quality gates are enforced rather than merely flagged: a listing must reach the configured **confidence floor** (`minimumConfidence`, default `0.50`) and must clear within **`maximumDaysToClear`** days (default 14). Otherwise it is counted as uncertain and is not recommended.
+
+## Server profiles
+
+The API host stays pinned to `api.donutsmp.net` and the key-free paths never touch it, so a second server is not a second code path. What does differ between servers is **how the price is written** in the lore of an auction menu item. That is described by a *server profile*, which lives in `settings.json` under `serverProfile` and can be changed in game.
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `name` | How AhProfit refers to the server in its messages. Blank becomes "this server". | `""` |
+| `currencyWords` | The words your server prints next to a price, lower-case. | `coins, coin, money, cash, usd, dollars, dollar, mints, mint, gems, gem, tokens, token, credits, credit, emeralds` |
+| `pricePattern` | A regular expression with **one capture group** naming the amount, tried before every heuristic. Blank disables it. | `""` |
+| `assumedTimeLeftSeconds` | How long a listing lives on this server, used only for the recorded `time_left`. | `600` |
+
+Three rules make a profile safe to hand-edit:
+
+- **Symbol prices need no profile at all.** `$`, `€`, and `£` are always recognised, so a server that writes `$160.00` or `$1.55` needs no configuration. RemnantSMP's `mints` is already in the default word list, so RemnantSMP works out of the box.
+- **A profile can never invent a price.** A line that is only a number and one word (`64 Diamonds`, `5 boxes`, `160 mints`) is always treated as a count, even if you mistakenly set an item name as your currency word. An unusable `pricePattern` is ignored rather than fatal.
+- **A custom pattern is authoritative.** If your server's layout is unusual, set `pricePattern` and its first capture group wins over every heuristic.
+
+```bash
+/ahprofit server                                  # show the active profile
+/ahprofit server name RemnantSMP                   # name used in messages
+/ahprofit server pattern "(?:price|cost)\s*:?\s*\$?([0-9.,]+)"
+/ahprofit server currency mints,cash,dollars
+```
+
+If prices do not read, `/ahprofit ah probe` prints the active profile, the raw lore of up to four slots, and how many prices were found. That is the fastest way to see whether a `pricePattern` is needed, and it never asks you to paste anything anywhere.
+
+**Honest limitation:** there is no public API for RemnantSMP, so only the key-free paths work there. AhProfit will not pretend otherwise, and the `api.donutsmp.net` host pin is deliberately not relaxed — it is a security control, and relaxing it would buy nothing without a key.
 
 ## API use and rate controls
 
@@ -281,9 +315,11 @@ Before release, install the resulting JAR in a Fabric 1.21.11 client, verify `/a
 - Item matching is deliberately strict. Unknown custom attributes, missing equipment durability/enchantment/trim fields, or incomplete container contents may suppress otherwise real opportunities rather than risk mixing different items.
 - Listings may expire or sell between polling and the player's inspection. Prices may move, and no recommendation is a promise of profit.
 - No automatic balance endpoint is used. Manually entered balances can be wrong; updating the balance after every in-game change is the player's responsibility.
-- Auction automation reads whatever container menu is open using generic container and lore heuristics. It has **not** been verified against the real DonutSMP auction menu, and it cannot know a server's custom confirmation dialogs, chat-driven flows, or anti-automation protections. Use dry run first, and expect to adjust the price patterns or abandon automation if the menu differs.
+- Auction automation reads whatever container menu is open using generic container and lore heuristics. It has **not** been verified against the real auction menu of any server, and it cannot know a server's custom confirmation dialogs, chat-driven flows, or anti-automation protections. Use dry run first, and expect to adjust the price patterns or abandon automation if the menu differs.
 - Automation only covers buying a listed item. It does not create listings, set prices on the server, or manage an existing inventory; sell-side advice is limited to the recommended list price shown in `/ahprofit status`.
-- GitHub Actions compiles/tests and packages the 1.21.11 target, but the project still needs an in-game smoke test with a live Fabric client and DonutSMP session.
+- `automationSellSlot` and `automationConfirmSlot` default to `-1`, so `/ahprofit ah sell` refuses to click until both are set to real slots for the server in question. Nothing is guessed on the sell side.
+- The API transport is pinned to `api.donutsmp.net`. RemnantSMP and any other server have **no** published market API here, so only the key-free harvester, spread analyzer, and automation paths work there. No key-free path is a substitute for an authenticated API.
+- GitHub Actions compiles/tests and packages the 1.21.11 target, but the project still needs an in-game smoke test with a live Fabric client and a real auction-house session.
 
 ## License
 

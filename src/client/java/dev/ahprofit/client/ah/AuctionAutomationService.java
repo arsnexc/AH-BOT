@@ -9,6 +9,7 @@ import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
+import dev.ahprofit.config.ServerProfile;
 import dev.ahprofit.market.MarketAnalysis;
 import dev.ahprofit.scanner.ScannerService;
 import dev.ahprofit.scanner.ScannerSnapshot;
@@ -89,7 +90,8 @@ public final class AuctionAutomationService {
         tickCounter = 0;
 
         long now = System.currentTimeMillis();
-        AuctionHouseSnapshot snapshot = AuctionHouseReader.read(client, now);
+        AuctionHouseSnapshot snapshot = AuctionHouseReader.read(client, now,
+                configManager.get().serverProfile());
         if (snapshot == null) {
             lastDecision.set("No auction-house menu is open.");
             return;
@@ -218,7 +220,7 @@ public final class AuctionAutomationService {
 
     /** Cheapest asking price per unit among the currently visible listings for one item. */
     private BigDecimal cheapestRivalUnitPrice(String itemId) {
-        AuctionHouseSnapshot snapshot = AuctionHouseReader.readCurrent();
+        AuctionHouseSnapshot snapshot = AuctionHouseReader.readCurrent(configManager.get().serverProfile());
         if (snapshot == null) {
             return null;
         }
@@ -254,7 +256,7 @@ public final class AuctionAutomationService {
 
     /**
      * Starts selling the first holding. Requires both the sell-button and confirm slots to be
-     * configured, because the mod does not know DonutSMP's sell menu layout; without them it refuses
+     * configured, because the mod does not know this server's sell menu layout; without them it refuses
      * rather than clicking blind.
      */
     public String beginSell() {

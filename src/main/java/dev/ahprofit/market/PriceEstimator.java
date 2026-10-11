@@ -137,9 +137,11 @@ public final class PriceEstimator {
         }
 
         List<AuctionListing> market = comparableListings(candidate, activeListings, nowMillis, maximumListingAgeSeconds);
-        if (market.size() + 1 < minimumListings) {
+        // Only rivals count as evidence. The candidate's own ask is the thing being valued, so
+        // counting it toward the minimum is circular and would let a single listing be a market.
+        if (market.size() < minimumListings) {
             return PriceEstimate.noEvidence(fingerprint,
-                    "only " + (market.size() + 1) + " comparable listings are visible; at least "
+                    "only " + market.size() + " comparable rival listings are visible; at least "
                             + minimumListings + " are needed to judge an asking-price spread");
         }
 

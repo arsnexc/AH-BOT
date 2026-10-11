@@ -53,7 +53,7 @@ AhProfit is a **client-only Fabric mod** for DonutSMP Auction House research. It
 5. Run `/ahprofit refresh` for one background import, or `/ahprofit` to periodically re-read the file. AhProfit does not obtain or generate this file for you, click menus, or invent completed transactions.
 6. Use `/ahprofit status` and the HUD as usual. They explicitly label the data as `LOCAL`, `LOCAL_WAITING` (input file absent), or `LOCAL_ERROR` (invalid/unreadable/older input). An absent file leaves the local bankroll tools and any existing local cache available, not a stream of live listings.
 
-With **zero completed sales**, `/ahprofit askonly on` ranks flips by asking-price spread instead: the resale target is the cheapest rival ask for the same item undercut by `askUndercutPercent`, never the market median. Without it, zero sales means zero opportunities, so nothing is ranked and automation has nothing to buy.
+With **zero completed sales**, `/ahprofit askonly on` ranks flips by asking-price spread instead: the resale target is the cheapest rival ask for the same item undercut by `askUndercutPercent`, never the market median. Asks are screened first: a listing further from the median than the wider of three median absolute deviations or half the median is discarded as an outlier, so one mis-keyed listing cannot set the resale price for an entire market. Discarded asks are disclosed in the estimate's flags, and a spread wider than 50% is treated as a symptom rather than evidence. Without it, zero sales means zero opportunities, so nothing is ranked and automation has nothing to buy.
 
 Source selection is persisted in `settings.json` as `marketDataMode`:
 

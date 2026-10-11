@@ -9,6 +9,7 @@ import java.math.MathContext;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.List;
 
 /** Robust, completed-sales-first resale-price estimator. Active asks only cap, never establish, value. */
@@ -18,6 +19,12 @@ public final class PriceEstimator {
     private static final long HALF_LIFE_MILLIS = Duration.ofHours(36).toMillis();
     /** Ask-based estimates have no sale velocity, so clearance is unknown rather than infinite. */
     private static final double UNKNOWN_CLEARANCE_DAYS = 7.0;
+    /** An ask further than this many MADs from the median is treated as noise, not a market. */
+    private static final double OUTLIER_MAD_MULTIPLE = 3.0;
+    /** A spread wider than this is more likely a misread price than a real mispricing. */
+    private static final BigDecimal IMPLAUSIBLE_SPREAD_PERCENT = new BigDecimal("50");
+    /** Spread beyond which extra width stops adding confidence. */
+    private static final BigDecimal SPREAD_SATURATION_PERCENT = new BigDecimal("40");
     private static final BigDecimal ZERO = BigDecimal.ZERO;
 
     public PriceEstimate estimate(AuctionListing candidate, List<CompletedSale> allSales,
@@ -138,26 +145,40 @@ public final class PriceEstimator {
 
         List<BigDecimal> asks = market.stream().map(AuctionListing::unitPrice).toList();
         BigDecimal marketMedian = median(asks);
-        BigDecimal lowestCompeting = asks.stream().min(BigDecimal::compareTo).orElse(marketMedian);
         BigDecimal mad = medianAbsoluteDeviation(asks, marketMedian);
         BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
                 : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
+
+        // To resell, the listing must undercut the cheapest rival a buyer would actually take, so
+        // that is the ceiling. The raw minimum is an extreme value, not an estimate: one manipulated
+        // or mis-keyed listing would otherwise set the resale price for the entire market, so asks
+        // too far from the median are discarded first.
+        List<AuctionListing> credible = credibleListings(market, marketMedian, mad);
+        BigDecimal lowestCompeting = credible.stream().map(AuctionListing::unitPrice)
+                .min(BigDecimal::compareTo).orElse(marketMedian);
 
         BigDecimal candidateUnit = candidate.unitPrice();
         BigDecimal spreadPercent = Money.divide(marketMedian.subtract(candidateUnit), marketMedian)
                 .multiply(new BigDecimal("100"), MathContext.DECIMAL128);
         boolean spreadSufficient = spreadPercent.compareTo(minimumSpreadPercent) >= 0;
 
-        // To resell, the listing must undercut the cheapest rival ask, so that is the ceiling.
         BigDecimal target = lowestCompeting.multiply(BigDecimal.ONE.subtract(
                 Money.divide(undercutPercent, new BigDecimal("100")), MathContext.DECIMAL128), MathContext.DECIMAL128);
         BigDecimal conservative = new BigDecimal(
                 target.max(BigDecimal.ONE).stripTrailingZeros().toPlainString());
 
+        boolean ceilingClearsAsk = target.compareTo(candidateUnit) > 0;
+        // A very wide spread is not proportionally more convincing: past a point it is far more
+        // likely to be a misread price or a variant that is not actually comparable than a genuine
+        // mispricing, so extra width must not keep raising confidence.
+        boolean spreadImplausible = spreadPercent.compareTo(IMPLAUSIBLE_SPREAD_PERCENT) > 0;
+
         double listingFactor = Math.min(1.0, market.size() / (double) Math.max(1, minimumListings * 2));
-        double spreadFactor = clamp(Money.divide(spreadPercent, new BigDecimal("50")).doubleValue(), 0, 1);
+        double spreadFactor = clamp(Money.divide(spreadPercent, SPREAD_SATURATION_PERCENT).doubleValue(), 0, 1);
         double dispersionFactor = 1.0 / (1.0 + 2.0 * dispersion.doubleValue());
-        double confidence = clamp(listingFactor * 0.5 + spreadFactor * 0.3 + dispersionFactor * 0.2, 0, 0.85);
+        double plausibilityFactor = spreadImplausible ? 0.2 : 1.0;
+        double confidence = clamp(listingFactor * 0.4 + spreadFactor * 0.25 + dispersionFactor * 0.2
+                + plausibilityFactor * 0.15, 0, 0.85);
 
         LiquidityLevel liquidity = liquidityLevel(market.size() + 1, market.isEmpty() ? 0 : 1, market.size());
         BigDecimal visibleSupply = market.stream()
@@ -171,17 +192,48 @@ public final class PriceEstimator {
             flags.add("asking-price spread " + Money.formatPercent(spreadPercent) + " is below the required "
                     + Money.formatPercent(minimumSpreadPercent));
         }
+        if (!ceilingClearsAsk) {
+            flags.add("the resale ceiling of " + Money.format(conservative)
+                    + " does not clear this listing's " + Money.format(candidateUnit)
+                    + " per unit, so no spread survives the fee and risk buffer");
+        }
         if (market.size() < minimumListings * 2) {
             flags.add("few comparable listings (" + (market.size() + 1) + "), so the market reference is thin");
         }
         if (dispersion.compareTo(new BigDecimal("0.35")) >= 0) {
             flags.add("asking prices for this variant are widely dispersed");
         }
+        if (credible.size() < market.size()) {
+            flags.add((market.size() - credible.size()) + " asking price(s) were ignored as outliers");
+        }
+        if (spreadImplausible) {
+            flags.add("the spread of " + Money.formatPercent(spreadPercent)
+                    + " is wide enough to suggest a misread price or a non-comparable variant");
+        }
 
         return new PriceEstimate(fingerprint, null, marketMedian, conservative, null, dispersion,
                 0, 0, 0, BigDecimal.ZERO, market.size(), visibleSupply, lowestCompeting,
-                UNKNOWN_CLEARANCE_DAYS, confidence, liquidity, spreadSufficient && market.size() + 1 >= minimumListings,
+                UNKNOWN_CLEARANCE_DAYS, confidence, liquidity,
+                spreadSufficient && ceilingClearsAsk && market.size() + 1 >= minimumListings,
                 true, flags);
+    }
+
+    /**
+     * Listings whose asking price is close enough to the median to describe the market. The band is
+     * the wider of three MADs and half the median, so it still rejects a stray dump when every
+     * genuine ask is identical and the MAD collapses to zero.
+     */
+    private static List<AuctionListing> credibleListings(List<AuctionListing> market, BigDecimal median,
+                                                         BigDecimal mad) {
+        if (market.isEmpty()) {
+            return market;
+        }
+        BigDecimal relativeBand = Money.percentOf(median, new BigDecimal("50"));
+        BigDecimal band = mad.multiply(BigDecimal.valueOf(OUTLIER_MAD_MULTIPLE)).max(relativeBand);
+        List<AuctionListing> credible = market.stream()
+                .filter(listing -> listing.unitPrice().subtract(median).abs().compareTo(band) <= 0)
+                .toList();
+        return credible.isEmpty() ? market : credible;
     }
 
     private static List<AuctionListing> comparableListings(AuctionListing candidate, List<AuctionListing> listings,

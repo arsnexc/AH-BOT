@@ -5,10 +5,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
-import dev.ahprofit.market.ItemFingerprint;
+import dev.ahprofit.util.JsonSafety;
 
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
@@ -25,7 +24,6 @@ import java.net.http.HttpTimeoutException;
 public final class DonutApiClient {
     private static final int MAX_PAGE_ARRAY_SIZE = 1_000;
     private static final int MAX_JSON_NESTING = 32;
-    private static final long MAX_TIME_LEFT_MILLIS = Duration.ofDays(365).toMillis();
 
     private final ApiTransport transport;
     private final Supplier<String> apiKeySupplier;
@@ -66,7 +64,7 @@ public final class DonutApiClient {
                 continue;
             }
             try {
-                AuctionListing listing = parseListing(element, page, observedAtMillis);
+                AuctionListing listing = MarketRecordParser.parseListing(element, page, observedAtMillis);
                 if (seen.add(listing.listingKey())) {
                     parsed.add(listing);
                 } else {
@@ -103,7 +101,7 @@ public final class DonutApiClient {
                 continue;
             }
             try {
-                CompletedSale sale = parseSale(element, page, observedAtMillis);
+                CompletedSale sale = MarketRecordParser.parseSale(element, page, observedAtMillis);
                 if (seen.add(sale.saleKey())) {
                     parsed.add(sale);
                 } else {
@@ -171,7 +169,7 @@ public final class DonutApiClient {
 
     private static JsonArray resultArray(ApiResponse response) throws DonutApiException {
         if (response.body().length() > 4 * 1024 * 1024
-                || !hasSafeJsonNesting(response.body(), MAX_JSON_NESTING)) {
+                || !JsonSafety.hasSafeNesting(response.body(), MAX_JSON_NESTING)) {
             throw schemaError("Response exceeded the parsing size or nesting safety limit.");
         }
         final JsonElement parsed;
@@ -204,117 +202,6 @@ public final class DonutApiClient {
         return result.getAsJsonArray();
     }
 
-    private static AuctionListing parseListing(JsonElement element, int page, long observedAtMillis) {
-        if (!element.isJsonObject()) {
-            throw new IllegalArgumentException("Listing is not an object.");
-        }
-        JsonObject object = element.getAsJsonObject();
-        JsonElement itemElement = object.get("item");
-        if (itemElement == null || !itemElement.isJsonObject()) {
-            throw new IllegalArgumentException("Listing item is missing.");
-        }
-        ApiItem item = ApiItem.fromJson(itemElement.getAsJsonObject());
-        ItemFingerprint.Result fingerprint = ItemFingerprint.of(item);
-        BigDecimal totalPrice = requiredPositiveDecimal(object, "price");
-        JsonObject seller = requiredObject(object, "seller");
-        String sellerName = optionalString(seller, "name");
-        String sellerId = optionalString(seller, "uuid");
-        if (sellerName.isBlank() && sellerId.isBlank()) {
-            throw new IllegalArgumentException("Listing seller is missing.");
-        }
-        long timeLeftMillis = requiredLong(object, "time_left");
-        if (timeLeftMillis < 0 || timeLeftMillis > MAX_TIME_LEFT_MILLIS) {
-            throw new IllegalArgumentException("Listing time remaining is outside the supported range.");
-        }
-        long expiresAtMillis;
-        try {
-            expiresAtMillis = Math.addExact(observedAtMillis, timeLeftMillis);
-        } catch (ArithmeticException exception) {
-            throw new IllegalArgumentException("Listing expiry overflowed.");
-        }
-        String listingKey = AuctionListing.stableKey(sellerId, sellerName, fingerprint.value(), totalPrice,
-                item.count(), expiresAtMillis);
-        BigDecimal unitPrice = AuctionListing.unitPrice(totalPrice, item.count());
-        return new AuctionListing(listingKey, item, fingerprint, totalPrice, unitPrice, sellerName, sellerId,
-                timeLeftMillis, observedAtMillis, expiresAtMillis, page);
-    }
-
-    private static CompletedSale parseSale(JsonElement element, int page, long observedAtMillis) {
-        if (!element.isJsonObject()) {
-            throw new IllegalArgumentException("Transaction is not an object.");
-        }
-        JsonObject object = element.getAsJsonObject();
-        JsonElement itemElement = object.get("item");
-        if (itemElement == null || !itemElement.isJsonObject()) {
-            throw new IllegalArgumentException("Transaction item is missing.");
-        }
-        ApiItem item = ApiItem.fromJson(itemElement.getAsJsonObject());
-        ItemFingerprint.Result fingerprint = ItemFingerprint.of(item);
-        BigDecimal totalPrice = requiredPositiveDecimal(object, "price");
-        long soldAtMillis = requiredLong(object, "unixMillisDateSold");
-        if (soldAtMillis < 0 || soldAtMillis > observedAtMillis + Duration.ofMinutes(5).toMillis()) {
-            throw new IllegalArgumentException("Transaction sale timestamp is invalid.");
-        }
-        String sellerName = "";
-        String sellerId = "";
-        JsonElement sellerElement = object.get("seller");
-        if (sellerElement != null && sellerElement.isJsonObject()) {
-            JsonObject seller = sellerElement.getAsJsonObject();
-            sellerName = optionalString(seller, "name");
-            sellerId = optionalString(seller, "uuid");
-        }
-        String saleKey = CompletedSale.stableKey(fingerprint.value(), totalPrice, item.count(), sellerId,
-                sellerName, soldAtMillis);
-        BigDecimal unitPrice = CompletedSale.unitPrice(totalPrice, item.count());
-        return new CompletedSale(saleKey, item, fingerprint, totalPrice, unitPrice, sellerName, sellerId,
-                soldAtMillis, observedAtMillis, page);
-    }
-
-    private static BigDecimal requiredPositiveDecimal(JsonObject object, String name) {
-        JsonElement element = object.get(name);
-        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
-            throw new IllegalArgumentException("Missing or invalid numeric field: " + name);
-        }
-        try {
-            BigDecimal value = new BigDecimal(element.getAsString());
-            if (value.signum() <= 0 || value.compareTo(new BigDecimal("1000000000000000000")) > 0) {
-                throw new IllegalArgumentException("Numeric field is outside the supported range.");
-            }
-            return value.stripTrailingZeros();
-        } catch (NumberFormatException exception) {
-            throw new IllegalArgumentException("Invalid numeric field: " + name);
-        }
-    }
-
-    private static long requiredLong(JsonObject object, String name) {
-        JsonElement element = object.get(name);
-        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
-            throw new IllegalArgumentException("Missing or invalid integer field: " + name);
-        }
-        try {
-            return new BigDecimal(element.getAsString()).longValueExact();
-        } catch (ArithmeticException | NumberFormatException exception) {
-            throw new IllegalArgumentException("Invalid integer field: " + name);
-        }
-    }
-
-    private static JsonObject requiredObject(JsonObject object, String name) {
-        JsonElement element = object.get(name);
-        if (element == null || !element.isJsonObject()) {
-            throw new IllegalArgumentException("Missing object field: " + name);
-        }
-        return element.getAsJsonObject();
-    }
-
-    private static String optionalString(JsonObject object, String name) {
-        JsonElement element = object.get(name);
-        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()
-                || !element.getAsJsonPrimitive().isString()) {
-            return "";
-        }
-        return element.getAsString().trim();
-    }
-
     private static Duration parseRetryAfter(String value) {
         if (value == null || value.isBlank()) {
             return Duration.ofSeconds(60);
@@ -336,39 +223,8 @@ public final class DonutApiClient {
         }
     }
 
-    private static boolean hasSafeJsonNesting(String body, int maximumDepth) {
-        int depth = 0;
-        boolean inString = false;
-        boolean escaped = false;
-        for (int index = 0; index < body.length(); index++) {
-            char character = body.charAt(index);
-            if (inString) {
-                if (escaped) {
-                    escaped = false;
-                } else if (character == '\\') {
-                    escaped = true;
-                } else if (character == '"') {
-                    inString = false;
-                }
-                continue;
-            }
-            if (character == '"') {
-                inString = true;
-            } else if (character == '{' || character == '[') {
-                if (++depth > maximumDepth) {
-                    return false;
-                }
-            } else if (character == '}' || character == ']') {
-                if (--depth < 0) {
-                    return false;
-                }
-            }
-        }
-        return !inString && depth == 0;
-    }
-
     private static boolean isInvalidPage(String body) {
-        if (body == null || body.length() > 64 * 1024 || !hasSafeJsonNesting(body, MAX_JSON_NESTING)) {
+        if (body == null || body.length() > 64 * 1024 || !JsonSafety.hasSafeNesting(body, MAX_JSON_NESTING)) {
             return false;
         }
         try {

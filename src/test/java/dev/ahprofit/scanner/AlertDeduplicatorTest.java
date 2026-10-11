@@ -36,10 +36,12 @@ class AlertDeduplicatorTest {
                 oldEstimate.latestSaleAtMillis(), oldEstimate.unitsSoldPerDay(), oldEstimate.competingListings(),
                 oldEstimate.competingQuantity(), oldEstimate.lowestCompetingUnitPrice(), oldEstimate.daysToClearProxy(),
                 Math.min(1.0, oldEstimate.confidence() + 0.2), oldEstimate.liquidity(), oldEstimate.sufficientEvidence(),
+                oldEstimate.askBased(),
                 oldEstimate.flags());
         Opportunity changed = new Opportunity(original.listing(), changedEstimate, original.conservativeResaleRevenue(),
                 original.assumedSellingFee(), original.riskBuffer(), original.estimatedNetProfit(), original.roiPercent(),
-                original.discountPercent(), original.profitPerCapitalUnit(), original.score(), original.rationale(), original.flags());
+                original.discountPercent(), original.profitPerCapitalUnit(), original.score(), original.flipScore(),
+                original.rationale(), original.flags());
 
         assertEquals(1, deduplicator.collect(List.of(changed), now + 2_000).size());
     }

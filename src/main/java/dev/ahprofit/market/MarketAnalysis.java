@@ -3,6 +3,7 @@ package dev.ahprofit.market;
 import dev.ahprofit.bankroll.BankrollLimits;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -25,5 +26,13 @@ public record MarketAnalysis(
         warnings = List.copyOf(warnings == null ? List.of() : warnings);
         totalProposedCapital = totalProposedCapital == null ? BigDecimal.ZERO : totalProposedCapital;
         remainingDeployableCapital = remainingDeployableCapital == null ? BigDecimal.ZERO : remainingDeployableCapital;
+    }
+
+    public MarketAnalysis withWarning(String warning) {
+        List<String> expanded = new ArrayList<>(warnings);
+        expanded.add(warning);
+        return new MarketAnalysis(analyzedListings, skippedUncertainListings, economicallyQualifiedListings,
+                opportunities, bankroll, totalProposedCapital, remainingDeployableCapital,
+                categoryExposure, priceEstimates, expanded);
     }
 }

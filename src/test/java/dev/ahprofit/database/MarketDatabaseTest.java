@@ -9,10 +9,13 @@ import dev.ahprofit.market.PriceEstimate;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.ahprofit.data.LocalMarketSnapshot;
+
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.List;
@@ -21,6 +24,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MarketDatabaseTest {
     @TempDir
@@ -52,6 +56,29 @@ class MarketDatabaseTest {
     }
 
     @Test
+    void localSnapshotWritesRollBackTogetherIfSalesCannotBeStored() throws Exception {
+        Path file = temporaryDirectory.resolve("local-market.sqlite");
+        long now = System.currentTimeMillis();
+        ApiItem item = TestMarketFixtures.item("minecraft:diamond", 64);
+        AuctionListing original = TestMarketFixtures.listing(item, "6400", now - 1000, "original");
+        AuctionListing replacement = TestMarketFixtures.listing(item, "5000", now, "replacement");
+        CompletedSale sale = TestMarketFixtures.sale(item, "200", now - 60000, "seller", 1);
+        try (MarketDatabase database = new MarketDatabase(file)) {
+            database.initialize();
+            database.saveLocalSnapshot(new LocalMarketSnapshot(now - 1000, List.of(original), List.of()));
+            try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
+                 Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TRIGGER fail_sale BEFORE INSERT ON completed_sales BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+            }
+            assertThrows(SQLException.class,
+                    () -> database.saveLocalSnapshot(new LocalMarketSnapshot(now, List.of(replacement), List.of(sale))));
+            assertEquals(original.listingKey(), database.loadActiveListings(now, 300).getFirst().listingKey());
+            assertEquals(now - 1000, database.lastSuccessfulFetchMillis());
+            assertTrue(database.loadRecentSales(now - 100000, now).isEmpty());
+        }
+    }
+
+    @Test
     void completedTransactionsAndPriceEstimatesPersistAcrossReopen() throws Exception {
         Path file = temporaryDirectory.resolve("market.sqlite");
         long now = System.currentTimeMillis();
@@ -60,7 +87,7 @@ class MarketDatabaseTest {
         PriceEstimate estimate = new PriceEstimate(item.id(), new BigDecimal("250"), new BigDecimal("240"),
                 new BigDecimal("220"), new BigDecimal("4"), new BigDecimal("0.1"),
                 4, 8, sale.soldAtMillis(), new BigDecimal("8"), 2, new BigDecimal("128"),
-                new BigDecimal("200"), 2.0, 0.7, LiquidityLevel.MEDIUM, true, List.of());
+                new BigDecimal("200"), 2.0, 0.7, LiquidityLevel.MEDIUM, true, false, List.of());
 
         try (MarketDatabase database = new MarketDatabase(file)) {
             database.initialize();

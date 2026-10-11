@@ -102,6 +102,19 @@ public final class ConfigManager implements AutoCloseable {
         return credentialsFile;
     }
 
+    public Path marketInputPath() {
+        return directory.resolve("market-input.json");
+    }
+
+    public Path localMarketDatabasePath() {
+        return directory.resolve("local-market.sqlite");
+    }
+
+    /** Live listings recorded from the open auction-house menu; merged with the manual input. */
+    public Path observedAuctionPath() {
+        return directory.resolve("ah-observed.json");
+    }
+
     /** Used only by the pinned DonutSMP HTTPS transport; never include this value in status or logs. */
     public String apiKeyForRequest() {
         return apiKey.get();
@@ -169,6 +182,14 @@ public final class ConfigManager implements AutoCloseable {
             warnings.add("Only manual balance mode is supported; API statistics are not treated as a verified spendable wallet.");
         }
 
+        MarketDataMode marketDataMode;
+        try {
+            marketDataMode = MarketDataMode.parse(string(json, "marketDataMode", "auto", warnings, 16));
+        } catch (IllegalArgumentException exception) {
+            warnings.add("Invalid setting 'marketDataMode'; auto mode was used.");
+            marketDataMode = MarketDataMode.AUTO;
+        }
+
         BigDecimal balance = decimal(json, "manualBalance", defaults.manualBalance(), BigDecimal.ZERO, MAX_BALANCE, warnings);
         long balanceUpdated = longInteger(json, "manualBalanceUpdatedAtMillis", 0, 0, Long.MAX_VALUE, warnings);
         BigDecimal reservePercent = decimal(json, "reservePercent", defaults.reservePercent(), BigDecimal.ZERO, new BigDecimal("100"), warnings);
@@ -193,6 +214,32 @@ public final class ConfigManager implements AutoCloseable {
         boolean alerts = bool(json, "alertsEnabled", defaults.alertsEnabled(), warnings);
         Set<ItemCategory> categories = categories(json.get("enabledCategories"), warnings);
         Set<String> excludedItems = excludedItems(json.get("excludedItems"), warnings);
+        BigDecimal minimumConfidence = decimal(json, "minimumConfidence", defaults.minimumConfidence(),
+                BigDecimal.ZERO, BigDecimal.ONE, warnings);
+        int maximumDaysToClear = integer(json, "maximumDaysToClear", defaults.maximumDaysToClear(), 1, 90, warnings);
+        boolean automationEnabled = bool(json, "automationEnabled", defaults.automationEnabled(), warnings);
+        boolean automationDryRun = bool(json, "automationDryRun", defaults.automationDryRun(), warnings);
+        BigDecimal automationMaxSpendPerAction = decimal(json, "automationMaxSpendPerAction",
+                defaults.automationMaxSpendPerAction(), BigDecimal.ZERO, MAX_BALANCE, warnings);
+        BigDecimal automationMaxSpendPerHour = decimal(json, "automationMaxSpendPerHour",
+                defaults.automationMaxSpendPerHour(), BigDecimal.ZERO, MAX_BALANCE, warnings);
+        int automationMaxActionsPerHour = integer(json, "automationMaxActionsPerHour",
+                defaults.automationMaxActionsPerHour(), 1, 500, warnings);
+        int automationCooldownSeconds = integer(json, "automationCooldownSeconds",
+                defaults.automationCooldownSeconds(), 3, 3_600, warnings);
+        BigDecimal automationMinimumScore = decimal(json, "automationMinimumScore",
+                defaults.automationMinimumScore(), BigDecimal.ZERO, new BigDecimal("100"), warnings);
+        int automationSellSlot = integer(json, "automationSellSlot", defaults.automationSellSlot(), -1, 255, warnings);
+        int automationConfirmSlot = integer(json, "automationConfirmSlot", defaults.automationConfirmSlot(), -1, 255, warnings);
+        boolean askOnlyAnalysis = bool(json, "askOnlyAnalysis", defaults.askOnlyAnalysis(), warnings);
+        int askMinimumListings = integer(json, "askMinimumListings", defaults.askMinimumListings(), 2, 50, warnings);
+        BigDecimal askMinimumSpreadPercent = decimal(json, "askMinimumSpreadPercent",
+                defaults.askMinimumSpreadPercent(), BigDecimal.ZERO, new BigDecimal("99"), warnings);
+        BigDecimal askMinimumRoiPercent = decimal(json, "askMinimumRoiPercent",
+                defaults.askMinimumRoiPercent(), BigDecimal.ZERO, new BigDecimal("1000"), warnings);
+        ServerProfile serverProfile = loadServerProfile(json, defaults.serverProfile(), warnings);
+        BigDecimal askUndercutPercent = decimal(json, "askUndercutPercent", defaults.askUndercutPercent(),
+                BigDecimal.ZERO, new BigDecimal("50"), warnings);
 
         AhProfitConfig result = new AhProfitConfig(
                 1, username, "manual", balance, balanceUpdated, reservePercent, minimumReserve,
@@ -200,15 +247,63 @@ public final class ConfigManager implements AutoCloseable {
                 maxCommodityExposurePercent, maxCategoryExposurePercent, pollInterval, minimumRoi,
                 minimumDiscount, profitFloor, profitBalancePercent, minimumSales, maxDataAge,
                 feePercent, riskBuffer, volatilityMultiplier, maxRecommendations, showHud, alerts,
-                categories, excludedItems
+                categories, excludedItems, marketDataMode, minimumConfidence, maximumDaysToClear,
+                automationEnabled, automationDryRun, automationMaxSpendPerAction, automationMaxSpendPerHour,
+                automationMaxActionsPerHour, automationCooldownSeconds, automationMinimumScore, automationSellSlot, automationConfirmSlot,
+                askOnlyAnalysis, askMinimumListings, askMinimumSpreadPercent, askUndercutPercent,
+                askMinimumRoiPercent, serverProfile
         );
         return new SettingsLoad(result, warnings, true, schema == 0);
+    }
+
+    private static ServerProfile loadServerProfile(JsonObject json, ServerProfile defaults,
+                                                   List<String> warnings) {
+        JsonElement element = json.get("serverProfile");
+        if (element == null || !element.isJsonObject()) {
+            return defaults;
+        }
+        JsonObject object = element.getAsJsonObject();
+        String name = string(object, "name", defaults.name(), warnings, 64);
+        String pattern = string(object, "pricePattern", defaults.pricePattern(), warnings, 512);
+        int timeLeft = integer(object, "assumedTimeLeftSeconds", defaults.assumedTimeLeftSeconds(),
+                1, 365 * 24 * 60 * 60, warnings);
+        Set<String> words = new java.util.LinkedHashSet<>();
+        JsonElement wordsElement = object.get("currencyWords");
+        if (wordsElement != null && wordsElement.isJsonArray()) {
+            for (JsonElement word : wordsElement.getAsJsonArray()) {
+                if (word.isJsonPrimitive() && !word.getAsString().isBlank()) {
+                    words.add(word.getAsString().trim().toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        if (words.isEmpty()) {
+            words = defaults.currencyWords();
+        }
+        try {
+            return new ServerProfile(name, words, pattern, timeLeft);
+        } catch (RuntimeException exception) {
+            warnings.add("The server profile was rejected and the defaults were kept: " + exception.getMessage());
+            return defaults;
+        }
+    }
+
+    private static void saveServerProfile(JsonObject json, ServerProfile profile) {
+        JsonObject object = new JsonObject();
+        object.addProperty("name", profile.name());
+        object.addProperty("pricePattern", profile.pricePattern());
+        object.addProperty("assumedTimeLeftSeconds", profile.assumedTimeLeftSeconds());
+        JsonArray words = new JsonArray();
+        for (String word : profile.sortedCurrencyWords()) {
+            words.add(word);
+        }
+        object.add("currencyWords", words);
+        json.add("serverProfile", object);
     }
 
     private CredentialLoad loadCredentialsFromDisk() {
         List<String> warnings = new ArrayList<>();
         if (!Files.exists(credentialsFile, LinkOption.NOFOLLOW_LINKS)) {
-            return new CredentialLoad("", List.of("No API key is configured yet. Add one to " + credentialsFile.getFileName() + " after using /api in-game."), true);
+            return new CredentialLoad("", List.of("No API key is configured. Auto mode can use local market-input.json; live API mode needs a key from /api."), true);
         }
         if (Files.isSymbolicLink(credentialsFile)) {
             return new CredentialLoad("", List.of("Refusing to read a symbolic-link credentials file."), false);
@@ -223,7 +318,7 @@ public final class ConfigManager implements AutoCloseable {
             }
             JsonElement keyElement = parsed.getAsJsonObject().get("apiKey");
             if (keyElement == null || keyElement.isJsonNull()) {
-                return new CredentialLoad("", List.of("No DonutSMP API key is configured; add it to credentials.json."), false);
+                return new CredentialLoad("", List.of("No market API key is configured; local data mode remains available."), false);
             }
             if (!keyElement.isJsonPrimitive() || !keyElement.getAsJsonPrimitive().isString()) {
                 return new CredentialLoad("", List.of("The credentials apiKey field must be a string; no key was loaded."), false);
@@ -234,7 +329,7 @@ public final class ConfigManager implements AutoCloseable {
             }
             return new CredentialLoad(key, warnings, false);
         } catch (IOException | JsonParseException | IllegalStateException | SecurityException exception) {
-            return new CredentialLoad("", List.of("Could not read credentials.json; API requests are paused."), false);
+            return new CredentialLoad("", List.of("Could not read credentials.json; API requests are paused, but local data mode remains available."), false);
         }
     }
 
@@ -316,6 +411,7 @@ public final class ConfigManager implements AutoCloseable {
         json.addProperty("schemaVersion", 1);
         json.addProperty("username", config.username());
         json.addProperty("balanceMode", "manual");
+        json.addProperty("marketDataMode", config.marketDataMode().configValue());
         json.addProperty("manualBalance", config.manualBalance().toPlainString());
         json.addProperty("manualBalanceUpdatedAtMillis", config.manualBalanceUpdatedAtMillis());
         json.addProperty("reservePercent", config.reservePercent().toPlainString());
@@ -345,6 +441,22 @@ public final class ConfigManager implements AutoCloseable {
         JsonArray excludedItems = new JsonArray();
         config.excludedItems().stream().sorted().forEach(excludedItems::add);
         json.add("excludedItems", excludedItems);
+        json.addProperty("minimumConfidence", config.minimumConfidence().toPlainString());
+        json.addProperty("maximumDaysToClear", config.maximumDaysToClear());
+        json.addProperty("automationEnabled", config.automationEnabled());
+        json.addProperty("automationDryRun", config.automationDryRun());
+        json.addProperty("automationMaxSpendPerAction", config.automationMaxSpendPerAction().toPlainString());
+        json.addProperty("automationMaxSpendPerHour", config.automationMaxSpendPerHour().toPlainString());
+        json.addProperty("automationMaxActionsPerHour", config.automationMaxActionsPerHour());
+        json.addProperty("automationCooldownSeconds", config.automationCooldownSeconds());
+        json.addProperty("automationMinimumScore", config.automationMinimumScore().toPlainString());
+        json.addProperty("automationSellSlot", config.automationSellSlot());
+        json.addProperty("automationConfirmSlot", config.automationConfirmSlot());
+        json.addProperty("askOnlyAnalysis", config.askOnlyAnalysis());
+        json.addProperty("askMinimumListings", config.askMinimumListings());
+        json.addProperty("askMinimumSpreadPercent", config.askMinimumSpreadPercent().toPlainString());
+        json.addProperty("askUndercutPercent", config.askUndercutPercent().toPlainString());
+        saveServerProfile(json, config.serverProfile());
         return GSON.toJson(json) + System.lineSeparator();
     }
 

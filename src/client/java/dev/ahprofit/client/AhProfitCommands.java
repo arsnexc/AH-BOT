@@ -4,8 +4,15 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import dev.ahprofit.bankroll.BankrollLimits;
 import dev.ahprofit.bankroll.BankrollManager;
+import dev.ahprofit.client.ah.AuctionAutomationService;
+import dev.ahprofit.client.ah.AuctionHouseReader;
+import dev.ahprofit.client.ah.AuctionHouseRecorder;
+import dev.ahprofit.ah.HoldingsTracker;
+import java.util.List;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.config.ConfigManager;
+import dev.ahprofit.config.ServerProfile;
+import dev.ahprofit.config.MarketDataMode;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.LiquidityLevel;
 import dev.ahprofit.market.MarketAnalysis;
@@ -30,14 +37,80 @@ public final class AhProfitCommands {
     private AhProfitCommands() {
     }
 
-    public static void register(ScannerService scanner, ConfigManager configManager) {
+    public static void register(ScannerService scanner, ConfigManager configManager,
+                                AuctionAutomationService automation, AuctionHouseRecorder recorder) {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
             dispatcher.register(ClientCommandManager.literal("ahprofit")
                     .executes(context -> toggle(context, scanner, configManager))
                     .then(ClientCommandManager.literal("toggle")
                             .executes(context -> toggle(context, scanner, configManager)))
                     .then(ClientCommandManager.literal("status")
-                            .executes(context -> status(context, scanner, configManager)))
+                            .executes(context -> status(context, scanner, configManager, automation, recorder)))
+                    .then(ClientCommandManager.literal("source")
+                            .executes(context -> source(context, scanner, configManager, false))
+                            .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                                    .suggests((context, builder) -> {
+                                        builder.suggest("auto");
+                                        builder.suggest("api");
+                                        builder.suggest("local");
+                                        return builder.buildFuture();
+                                    })
+                                    .executes(context -> source(context, scanner, configManager, true))))
+                    .then(ClientCommandManager.literal("ah")
+                            .executes(context -> auctionHouse(context, configManager, automation, null))
+                            .then(ClientCommandManager.literal("on")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "on")))
+                            .then(ClientCommandManager.literal("off")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "off")))
+                            .then(ClientCommandManager.literal("dryrun")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "dryrun")))
+                            .then(ClientCommandManager.literal("live")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "live")))
+                            .then(ClientCommandManager.literal("stop")
+                                    .executes(context -> auctionHouse(context, configManager, automation, "stop")))
+                            .then(ClientCommandManager.literal("holdings")
+                                    .executes(context -> holdings(context, automation)))
+                            .then(ClientCommandManager.literal("sellplan")
+                                    .executes(context -> sellPlan(context, automation)))
+                            .then(ClientCommandManager.literal("sell")
+                                    .executes(context -> sell(context, automation)))
+                            .then(ClientCommandManager.literal("record")
+                                    .executes(context -> record(context, recorder, null))
+                                    .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                                            .suggests((context, builder) -> {
+                                                builder.suggest("on");
+                                                builder.suggest("off");
+                                                return builder.buildFuture();
+                                            })
+                                            .executes(context -> record(context, recorder, StringArgumentType.getString(context, "mode")))))
+                            .then(ClientCommandManager.literal("probe")
+                                    .executes(context -> probe(context, automation, recorder, configManager)))
+                            .then(ClientCommandManager.literal("limits")
+                                    .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
+                                            .executes(context -> auctionLimits(context, scanner, configManager)))))
+                    .then(ClientCommandManager.literal("server")
+                            .executes(context -> server(context, configManager))
+                            .then(ClientCommandManager.literal("name")
+                                    .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
+                                            .executes(context -> serverName(context, configManager,
+                                                    StringArgumentType.getString(context, "value")))))
+                            .then(ClientCommandManager.literal("pattern")
+                                    .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
+                                            .executes(context -> serverPattern(context, configManager,
+                                                    StringArgumentType.getString(context, "value")))))
+                            .then(ClientCommandManager.literal("currency")
+                                    .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
+                                            .executes(context -> serverCurrency(context, configManager,
+                                                    StringArgumentType.getString(context, "value"))))))
+                    .then(ClientCommandManager.literal("askonly")
+                            .executes(context -> askOnly(context, configManager, null))
+                            .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                                    .suggests((context, builder) -> {
+                                        builder.suggest("on");
+                                        builder.suggest("off");
+                                        return builder.buildFuture();
+                                    })
+                                    .executes(context -> askOnly(context, configManager, StringArgumentType.getString(context, "mode")))))
                     .then(ClientCommandManager.literal("budget")
                             .then(ClientCommandManager.argument("amount", StringArgumentType.greedyString())
                                     .executes(context -> budget(context, scanner, configManager))))
@@ -66,8 +139,286 @@ public final class AhProfitCommands {
     }
 
     private static int status(CommandContext<FabricClientCommandSource> context,
-                              ScannerService scanner, ConfigManager configManager) {
-        sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get());
+                              ScannerService scanner, ConfigManager configManager,
+                              AuctionAutomationService automation, AuctionHouseRecorder recorder) {
+        sendFullStatus(context.getSource(), scanner.snapshot(), configManager.get(), automation, recorder);
+        return 1;
+    }
+
+    private static int holdings(CommandContext<FabricClientCommandSource> context,
+                                 AuctionAutomationService automation) {
+        List<HoldingsTracker.Holding> bought = automation.holdings();
+        if (bought.isEmpty()) {
+            context.getSource().sendFeedback(Component.literal("Nothing bought this session."));
+            return 1;
+        }
+        context.getSource().sendFeedback(Component.literal("Bought this session (in memory, not a verified inventory):"));
+        for (HoldingsTracker.Holding holding : bought) {
+            context.getSource().sendFeedback(Component.literal("  " + holding.describe()));
+        }
+        return 1;
+    }
+
+    private static int sellPlan(CommandContext<FabricClientCommandSource> context,
+                                 AuctionAutomationService automation) {
+        List<String> lines = automation.sellPlan();
+        if (lines.isEmpty()) {
+            context.getSource().sendFeedback(Component.literal("Nothing to sell; automation has not bought anything this session."));
+            return 1;
+        }
+        context.getSource().sendFeedback(Component.literal("Sell plan (ask-based, never below break-even):"));
+        for (String line : lines) {
+            context.getSource().sendFeedback(Component.literal("  " + line));
+        }
+        return 1;
+    }
+
+    private static int sell(CommandContext<FabricClientCommandSource> context,
+                             AuctionAutomationService automation) {
+        String outcome = automation.beginSell();
+        context.getSource().sendFeedback(Component.literal("AhProfit: " + outcome));
+        return 1;
+    }
+
+    /** Dumps everything the mod can see, so an unreadable menu is diagnosable rather than guessed at. */
+    private static int probe(CommandContext<FabricClientCommandSource> context,
+                             AuctionAutomationService automation, AuctionHouseRecorder recorder,
+                             ConfigManager configManager) {
+        context.getSource().sendFeedback(Component.literal("--- AhProfit probe ---"));
+        for (String line : AuctionHouseReader.probe(net.minecraft.client.Minecraft.getInstance(),
+                configManager.get().serverProfile())) {
+            context.getSource().sendFeedback(Component.literal(line));
+        }
+        context.getSource().sendFeedback(Component.literal("Recorder: "
+                + (recorder.isRecording() ? "RECORDING" : "stopped") + " | " + recorder.status()
+                + " | output file exists: " + recorder.outputExists()));
+        for (String line : automation.diagnostics()) {
+            context.getSource().sendFeedback(Component.literal(line));
+        }
+        return 1;
+    }
+
+    private static int record(CommandContext<FabricClientCommandSource> context,
+                              AuctionHouseRecorder recorder, String mode) {
+        if (mode == null) {
+            context.getSource().sendFeedback(Component.literal("AhProfit AH recorder: "
+                    + (recorder.isRecording() ? "RECORDING" : "stopped") + " | " + recorder.status()));
+            return 1;
+        }
+        if (mode.equalsIgnoreCase("on")) {
+            recorder.start();
+            context.getSource().sendFeedback(Component.literal("AhProfit is now recording the auction-house listings you open. "
+                    + "It only reads the menu and writes config/ahprofit/ah-observed.json; it never clicks anything."));
+            return 1;
+        }
+        if (mode.equalsIgnoreCase("off")) {
+            recorder.stop();
+            context.getSource().sendFeedback(Component.literal("AhProfit stopped recording auction-house listings."));
+            return 1;
+        }
+        return error(context, "Usage: /ahprofit ah record [on|off]");
+    }
+
+    /** Shows the active server profile, which decides how prices are read. */
+    private static int server(CommandContext<FabricClientCommandSource> context,
+                              ConfigManager configManager) {
+        ServerProfile profile = configManager.get().serverProfile();
+        context.getSource().sendFeedback(Component.literal("AhProfit server profile for "
+                + profile.displayName() + ":"));
+        context.getSource().sendFeedback(Component.literal("  currency words: "
+                + String.join(", ", profile.sortedCurrencyWords())));
+        context.getSource().sendFeedback(Component.literal("  assumed listing life: "
+                + profile.assumedTimeLeftSeconds() + "s"));
+        context.getSource().sendFeedback(Component.literal("  custom price pattern: "
+                + (profile.hasCustomPattern() ? profile.pricePattern() : "none")));
+        context.getSource().sendFeedback(Component.literal("Set it with /ahprofit server name <name>, "
+                + "/ahprofit server pattern <regex with one capture group>, or "
+                + "/ahprofit server currency <comma-separated words>."));
+        return 1;
+    }
+
+    private static int serverName(CommandContext<FabricClientCommandSource> context,
+                                  ConfigManager configManager, String value) {
+        ServerProfile current = configManager.get().serverProfile();
+        configManager.update(config -> config.withServerProfile(
+                new ServerProfile(value, current.currencyWords(), current.pricePattern(),
+                        current.assumedTimeLeftSeconds())));
+        context.getSource().sendFeedback(Component.literal("AhProfit will call this server \""
+                + value.trim() + "\" in its messages."));
+        return 1;
+    }
+
+    private static int serverPattern(CommandContext<FabricClientCommandSource> context,
+                                     ConfigManager configManager, String value) {
+        ServerProfile current = configManager.get().serverProfile();
+        String trimmed = value.trim();
+        try {
+            java.util.regex.Pattern.compile(trimmed);
+        } catch (RuntimeException exception) {
+            return error(context, "That is not a usable regular expression: " + exception.getMessage());
+        }
+        if (!trimmed.contains("(")) {
+            return error(context, "The pattern must contain one capture group around the amount, "
+                    + "for example (?:price|cost)\\s*:?\\s*\\$?([0-9.,]+)");
+        }
+        configManager.update(config -> config.withServerProfile(
+                new ServerProfile(current.name(), current.currencyWords(), trimmed,
+                        current.assumedTimeLeftSeconds())));
+        context.getSource().sendFeedback(Component.literal("AhProfit will read prices with: " + trimmed
+                + " | the first capture group is the amount. Test it with /ahprofit ah probe."));
+        return 1;
+    }
+
+    private static int serverCurrency(CommandContext<FabricClientCommandSource> context,
+                                      ConfigManager configManager, String value) {
+        ServerProfile current = configManager.get().serverProfile();
+        java.util.Set<String> words = new java.util.LinkedHashSet<>();
+        for (String word : value.split("[,;]")) {
+            if (!word.isBlank()) {
+                words.add(word.trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        if (words.isEmpty()) {
+            return error(context, "List at least one currency word, for example mints,cash");
+        }
+        configManager.update(config -> config.withServerProfile(
+                new ServerProfile(current.name(), words, current.pricePattern(),
+                        current.assumedTimeLeftSeconds())));
+        context.getSource().sendFeedback(Component.literal("AhProfit now treats these as currency words: "
+                + String.join(", ", words.stream().sorted().toList())));
+        return 1;
+    }
+
+    private static int askOnly(CommandContext<FabricClientCommandSource> context,
+                               ConfigManager configManager, String mode) {
+        AhProfitConfig current = configManager.get();
+        if (mode == null) {
+            context.getSource().sendFeedback(Component.literal("AhProfit ask-only analysis: "
+                    + (current.askOnlyAnalysis() ? "ON" : "OFF")
+                    + " (needs >= " + current.askMinimumListings() + " comparable listings and a spread of at least "
+                    + Money.formatPercent(current.askMinimumSpreadPercent()) + " below the market median ask)."));
+            return 1;
+        }
+        boolean enabled;
+        if (mode.equalsIgnoreCase("on")) {
+            enabled = true;
+        } else if (mode.equalsIgnoreCase("off")) {
+            enabled = false;
+        } else {
+            return error(context, "Usage: /ahprofit askonly [on|off]");
+        }
+        AhProfitConfig updated = configManager.update(config -> config.withAskOnlyAnalysis(enabled));
+        context.getSource().sendFeedback(Component.literal("AhProfit ask-only analysis "
+                + (enabled ? "ENABLED" : "disabled") + ". Recommendations are derived from active asking prices, "
+                + "not completed sales, so they are weaker evidence than sale-backed flips."));
+        if (enabled) {
+            context.getSource().sendFeedback(Component.literal("This is the key-free path: no API key or Donut+ needed. "
+                    + "Run /ahprofit refresh to re-score, and use /ahprofit ah dryrun before enabling live automation."));
+        }
+        return 1;
+    }
+
+    private static int auctionHouse(CommandContext<FabricClientCommandSource> context,
+                                    ConfigManager configManager, AuctionAutomationService automation, String action) {
+        if (action == null) {
+            sendAuctionStatus(context.getSource(), configManager.get(), automation);
+            return 1;
+        }
+        switch (action) {
+            case "on" -> {
+                AhProfitConfig updated = configManager.update(current -> current.withAutomationEnabled(true));
+                automation.resume();
+                context.getSource().sendFeedback(Component.literal("AhProfit auction automation ENABLED in "
+                        + (updated.automationDryRun() ? "DRY RUN (reports only, sends no clicks)" : "LIVE mode (it will click)")
+                        + ". It still only buys a listing that clears every filter at its live price, and it obeys "
+                        + "the per-action, hourly, and action-count caps. /ahprofit ah stop halts it instantly."));
+                return 1;
+            }
+            case "off" -> {
+                configManager.update(current -> current.withAutomationEnabled(false));
+                automation.stop();
+                context.getSource().sendFeedback(Component.literal("AhProfit auction automation disabled; it will not click anything."));
+                return 1;
+            }
+            case "dryrun" -> {
+                configManager.update(current -> current.withAutomationEnabled(true).withAutomationDryRun(true));
+                automation.resume();
+                context.getSource().sendFeedback(Component.literal("Dry run enabled: AhProfit reports what it would buy but sends no clicks."));
+                return 1;
+            }
+            case "live" -> {
+                configManager.update(current -> current.withAutomationEnabled(true).withAutomationDryRun(false));
+                automation.resume();
+                context.getSource().sendFeedback(Component.literal("LIVE automation enabled: AhProfit will click listings that clear every filter. "
+                        + "/ahprofit ah stop halts it instantly."));
+                return 1;
+            }
+            case "stop" -> {
+                automation.stop();
+                context.getSource().sendFeedback(Component.literal("AhProfit auction automation HALTED. It stays halted until /ahprofit ah on."));
+                return 1;
+            }
+            default -> {
+                return error(context, "Unknown auction automation action.");
+            }
+        }
+    }
+
+    private static int auctionLimits(CommandContext<FabricClientCommandSource> context,
+                                     ScannerService scanner, ConfigManager configManager) {
+        try {
+            String[] parts = StringArgumentType.getString(context, "amount").trim().split("\\s+");
+            if (parts.length != 2) {
+                return error(context, "Usage: /ahprofit ah limits <per-action> <per-hour>, for example /ahprofit ah limits 500000 5000000");
+            }
+            BigDecimal perAction = Money.parseUserAmount(parts[0]);
+            BigDecimal perHour = Money.parseUserAmount(parts[1]);
+            AhProfitConfig updated = configManager.update(current -> current.withAutomationLimits(
+                    perAction, perHour, current.automationMaxActionsPerHour(),
+                    current.automationCooldownSeconds(), current.automationMinimumScore()));
+            scanner.recomputeCached();
+            context.getSource().sendFeedback(Component.literal("AhProfit automation caps set to "
+                    + Money.format(updated.automationMaxSpendPerAction()) + " per action and "
+                    + Money.format(updated.automationMaxSpendPerHour()) + " per hour."));
+            return 1;
+        } catch (IllegalArgumentException exception) {
+            return error(context, exception.getMessage());
+        }
+    }
+
+    private static void sendAuctionStatus(FabricClientCommandSource source, AhProfitConfig config,
+                                          AuctionAutomationService automation) {
+        source.sendFeedback(Component.literal("AhProfit auction house: " + automation.statusLine(config)));
+        source.sendFeedback(Component.literal("Last decision: " + automation.lastDecision()));
+        source.sendFeedback(Component.literal("This hour: " + automation.actionsThisHour() + " of "
+                + config.automationMaxActionsPerHour() + " actions, "
+                + Money.format(automation.spendThisHour()) + " of "
+                + Money.format(config.automationMaxSpendPerHour()) + " spent."));
+        source.sendFeedback(Component.literal("Commands: /ahprofit ah on | off | dryrun | live | stop | record [on|off] | holdings | sellplan | sell | probe | limits <per-action> <per-hour>"));
+        source.sendFeedback(Component.literal("Server-specific: /ahprofit server name | pattern | currency. Run /ahprofit ah probe if prices do not read."));
+    }
+
+    private static int source(CommandContext<FabricClientCommandSource> context,
+                              ScannerService scanner, ConfigManager configManager, boolean change) {
+        if (change) {
+            try {
+                MarketDataMode mode = MarketDataMode.parse(StringArgumentType.getString(context, "mode"));
+                if (!scanner.setMarketDataMode(mode)) {
+                    return error(context, "AhProfit is shutting down and cannot change its data source.");
+                }
+            } catch (IllegalArgumentException exception) {
+                return error(context, exception.getMessage());
+            }
+        }
+        context.getSource().sendFeedback(Component.literal("AhProfit source: "
+                + configManager.get().marketDataMode().configValue() + " -> "
+                + (scanner.isUsingLocalData() ? "key-free local data (no API requests)" : "authenticated market API")
+                + ". API and local histories are kept separate."));
+        if (change) {
+            context.getSource().sendFeedback(Component.literal(scanner.isRunning()
+                    ? "Displayed analysis cleared; a background refresh is scheduled for the selected source."
+                    : "Displayed analysis cleared; the selected cache is being re-scored. Use /ahprofit refresh to load new market data."));
+        }
         return 1;
     }
 
@@ -150,10 +501,13 @@ public final class AhProfitCommands {
     private static int help(CommandContext<FabricClientCommandSource> context) {
         FabricClientCommandSource source = context.getSource();
         source.sendFeedback(Component.literal("/ahprofit — toggle the local, read-only scanner and show its current status."));
-        source.sendFeedback(Component.literal("/ahprofit status | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | refresh | help"));
+        source.sendFeedback(Component.literal("/ahprofit status | source [auto|api|local] | budget <amount> | reserve <amount> | minprofit <amount> | minroi <percent> | askonly [on|off] | ah [on|off|dryrun|live|stop|limits] | refresh | help"));
         source.sendFeedback(Component.literal("Amounts accept values such as 2000000, 2,000,000, or $2,000,000. Balance is manual and is not fetched from /stats."));
-        source.sendFeedback(Component.literal("Set the API key in config/ahprofit/credentials.json after generating it with /api; then use /ahprofit refresh."));
-        source.sendFeedback(Component.literal("AhProfit never buys, lists, moves items, clicks menus, or sends trading commands. All trading is manual."));
+        source.sendFeedback(Component.literal("No key? Auto mode uses config/ahprofit/market-input.json, or force /ahprofit source local. Supply actual listings and completed sales; then /ahprofit refresh."));
+        source.sendFeedback(Component.literal("Live API mode still needs a key from /api in credentials.json. Local-file prices are not live API-verified quotes."));
+        source.sendFeedback(Component.literal("Auction automation is OFF by default and never clicks unless you run /ahprofit ah on. "
+                + "Even then it only buys a listing that clears every filter at its live price, and it obeys the per-action, hourly, and action-count caps."));
+        source.sendFeedback(Component.literal("Dry run first with /ahprofit ah dryrun, then /ahprofit ah live. /ahprofit ah stop halts it instantly."));
         return 1;
     }
 
@@ -162,27 +516,30 @@ public final class AhProfitCommands {
         long now = System.currentTimeMillis();
         BankrollLimits limits = BankrollManager.calculate(config, now);
         String balanceLabel = limits.balanceConfigured() ? Money.format(limits.balance()) + " manual" : "not configured";
-        String apiLabel = state.apiStatus().name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        String dataLabel = state.apiStatus().name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String mode = enabled ? "ON" : "OFF";
         source.sendFeedback(Component.literal("AhProfit " + mode + " | balance " + balanceLabel
                 + (limits.balanceMayBeStale() ? " (stale)" : "")
                 + " | listings analyzed " + state.listingsAnalyzed()
                 + " | qualified opportunities " + state.qualifiedOpportunities()
                 + " | market data " + freshness(state.lastSuccessfulFetchMillis(), now, config.maxDataAgeSeconds())
-                + " | API " + apiLabel));
+                + " | source " + config.marketDataMode().configValue() + " | state " + dataLabel));
         if (!enabled) {
-            source.sendFeedback(Component.literal("No recurring API requests are scheduled. Use /ahprofit status for the last cached analysis."));
+            source.sendFeedback(Component.literal("No recurring market refreshes are scheduled. Use /ahprofit status for the selected cached analysis."));
         } else if (state.apiStatus() == ApiStatus.MISSING_KEY) {
-            source.sendFeedback(Component.literal("API key missing: create it with /api, edit config/ahprofit/credentials.json, then run /ahprofit refresh."));
+            source.sendFeedback(Component.literal("API mode needs a key. Choose /ahprofit source local for key-free files, or configure credentials.json for live API access."));
+        } else if (state.apiStatus() == ApiStatus.LOCAL_WAITING) {
+            source.sendFeedback(Component.literal("Key-free mode: supply config/ahprofit/market-input.json with actual observation timestamps, listings, and completed sales; then /ahprofit refresh."));
         }
     }
 
-    private static void sendFullStatus(FabricClientCommandSource source, ScannerSnapshot state, AhProfitConfig config) {
+    private static void sendFullStatus(FabricClientCommandSource source, ScannerSnapshot state, AhProfitConfig config,
+                                       AuctionAutomationService automation, AuctionHouseRecorder recorder) {
         long now = System.currentTimeMillis();
         BankrollLimits limits = BankrollManager.calculate(config, now);
         source.sendFeedback(Component.literal("AhProfit scanner: " + (state.running() ? "RUNNING" : "STOPPED")
-                + " | API: " + state.apiStatus().name() + " — " + state.apiMessage()));
-        source.sendFeedback(Component.literal("Last successful API fetch: "
+                + " | source: " + config.marketDataMode().configValue() + " | data state: " + state.apiStatus().name() + " — " + state.apiMessage()));
+        source.sendFeedback(Component.literal("Last successful market observation: "
                 + freshness(state.lastSuccessfulFetchMillis(), now, config.maxDataAgeSeconds())
                 + " | last listing observation: " + relativeTime(state.newestListingObservationMillis(), now)));
         source.sendFeedback(Component.literal("Listings analyzed: " + state.listingsAnalyzed()
@@ -196,6 +553,15 @@ public final class AhProfitCommands {
                 + " | deployable " + Money.format(limits.deployableCapital())
                 + " | max listing " + Money.format(limits.maxRecommendedListingSpend())
                 + " | minimum net profit " + Money.format(limits.minimumProfitThreshold())));
+        source.sendFeedback(Component.literal("Auction house: " + automation.statusLine(config)
+                + " | last decision: " + automation.lastDecision()));
+        source.sendFeedback(Component.literal("AH recorder: " + (recorder.isRecording() ? "RECORDING" : "stopped")
+                + " | " + recorder.status()));
+        source.sendFeedback(Component.literal("Bought this session: " + automation.holdingsSummary()));
+        ServerProfile profile = config.serverProfile();
+        source.sendFeedback(Component.literal("Server: " + profile.displayName()
+                + " | currency words " + profile.sortedCurrencyWords().size()
+                + (profile.hasCustomPattern() ? " | custom price pattern set" : "")));
 
         MarketAnalysis analysis = state.analysis();
         if (analysis == null) {
@@ -246,6 +612,11 @@ public final class AhProfitCommands {
                 + " | competing listings " + estimate.competingListings()
                 + " | capital " + Money.format(listing.totalPrice())
                 + " | observed " + relativeTime(listing.observedAtMillis(), System.currentTimeMillis())));
+        source.sendFeedback(Component.literal("Flip score " + String.format(java.util.Locale.ROOT, "%.1f", opportunity.score())
+                + " | sell-through " + String.format(java.util.Locale.ROOT, "%.0f%%", opportunity.flipScore().sellThroughProbability() * 100)
+                + " | ~" + String.format(java.util.Locale.ROOT, "%.1f", opportunity.flipScore().expectedDaysToSell()) + "d to clear"
+                + " | profit per capital per day " + String.format(java.util.Locale.ROOT, "%.2f%%", opportunity.flipScore().profitPerCapitalPerDay() * 100)
+                + " | weakest point: " + opportunity.flipScore().dominantWeakness()));
         source.sendFeedback(Component.literal("Ranked because: " + opportunity.rationale()));
         if (!opportunity.flags().isEmpty()) {
             source.sendError(Component.literal("Risk/data flags: " + String.join("; ", opportunity.flags())));
@@ -254,7 +625,7 @@ public final class AhProfitCommands {
 
     private static String freshness(long timestampMillis, long nowMillis, int maximumAgeSeconds) {
         if (timestampMillis <= 0) {
-            return "never fetched";
+            return "never observed";
         }
         String age = relativeTime(timestampMillis, nowMillis);
         boolean stale = nowMillis - timestampMillis > TimeUnit.SECONDS.toMillis(maximumAgeSeconds);

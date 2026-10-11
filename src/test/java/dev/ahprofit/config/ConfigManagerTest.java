@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -40,6 +41,78 @@ class ConfigManagerTest {
         assertFalse(settings.contains(secret));
         assertFalse(settings.contains("apiKey"));
         assertTrue(credentials.contains(secret));
+    }
+
+    @Test
+    void localModePersistsAndSurvivesBankrollCopies() throws Exception {
+        Path directory = temporaryDirectory.resolve("local-settings");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.AUTO, manager.get().marketDataMode());
+            manager.update(current -> current.withMarketDataMode(MarketDataMode.LOCAL)
+                    .withManualBalance(new BigDecimal("100000"), System.currentTimeMillis())
+                    .withMinimumReserve(new BigDecimal("1000"))
+                    .withMinimumProfitFloor(new BigDecimal("500"))
+                    .withMinimumRoiPercent(new BigDecimal("25")));
+            assertEquals(MarketDataMode.LOCAL, manager.get().marketDataMode());
+        }
+        try (ConfigManager reopened = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.LOCAL, reopened.get().marketDataMode());
+            assertTrue(reopened.apiKeyForRequest().isBlank());
+        }
+        assertTrue(Files.readString(directory.resolve("settings.json")).contains("\"marketDataMode\": \"local\""));
+    }
+
+    @Test
+    void legacySettingsDefaultToAutoAndUnknownModesWarn() throws Exception {
+        Path directory = temporaryDirectory.resolve("legacy-settings");
+        Files.createDirectories(directory);
+        Files.writeString(directory.resolve("settings.json"), "{\"schemaVersion\":1}");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.AUTO, manager.get().marketDataMode());
+        }
+        Files.writeString(directory.resolve("settings.json"), "{\"schemaVersion\":1,\"marketDataMode\":\"unknown\"}");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(MarketDataMode.AUTO, manager.get().marketDataMode());
+            assertTrue(manager.startupWarnings().stream().anyMatch(message -> message.contains("marketDataMode")));
+        }
+        assertTrue(MarketDataMode.AUTO.usesLocalData(false));
+        assertFalse(MarketDataMode.AUTO.usesLocalData(true));
+        assertTrue(MarketDataMode.LOCAL.usesLocalData(true));
+        assertFalse(MarketDataMode.API.usesLocalData(false));
+        assertEquals(MarketDataMode.LOCAL, MarketDataMode.parse("LOCAL"));
+    }
+
+    @Test
+    void serverProfilePersistsAcrossRestarts() throws Exception {
+        Path directory = temporaryDirectory.resolve("server-profile");
+        try (ConfigManager manager = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            assertEquals(ServerProfile.defaults().currencyWords(), manager.get().serverProfile().currencyWords());
+            manager.update(current -> current.withServerProfile(new ServerProfile("RemnantSMP",
+                    Set.of("mints", "dollars"), "(?:price)\\s*\\$?([0-9.,]+)", 900)));
+            assertEquals("RemnantSMP", manager.get().serverProfile().name());
+        }
+        try (ConfigManager reopened = new ConfigManager(directory, ignored -> { }, ignored -> { })) {
+            ServerProfile profile = reopened.get().serverProfile();
+            assertEquals("RemnantSMP", profile.name());
+            assertEquals(Set.of("mints", "dollars"), profile.currencyWords());
+            assertEquals("(?:price)\\s*\\$?([0-9.,]+)", profile.pricePattern());
+            assertEquals(900, profile.assumedTimeLeftSeconds());
+        }
+        assertTrue(Files.readString(directory.resolve("settings.json")).contains("\"serverProfile\""));
+    }
+
+    @Test
+    void aBrokenServerProfileFallsBackToDefaultsWithAWarning() throws Exception {
+        Path directory = temporaryDirectory.resolve("broken-profile");
+        Files.createDirectories(directory);
+        Files.writeString(directory.resolve("settings.json"),
+                "{\"schemaVersion\":1,\"serverProfile\":{\"assumedTimeLeftSeconds\":0,"
+                        + "\"currencyWords\":[]}}");
+        List<String> warnings = new ArrayList<>();
+        try (ConfigManager manager = new ConfigManager(directory, warnings::add, ignored -> { })) {
+            assertEquals(ServerProfile.defaults().currencyWords(), manager.get().serverProfile().currencyWords());
+            assertEquals(600, manager.get().serverProfile().assumedTimeLeftSeconds());
+        }
     }
 
     @Test

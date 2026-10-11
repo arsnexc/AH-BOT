@@ -3,6 +3,7 @@ package dev.ahprofit.database;
 import dev.ahprofit.api.ApiItem;
 import dev.ahprofit.api.AuctionListing;
 import dev.ahprofit.api.CompletedSale;
+import dev.ahprofit.data.LocalMarketSnapshot;
 import dev.ahprofit.market.ItemFingerprint;
 import dev.ahprofit.market.PriceEstimate;
 import org.slf4j.Logger;
@@ -185,8 +186,41 @@ public final class MarketDatabase implements AutoCloseable {
     }
 
     public synchronized void saveListingPage(int page, List<AuctionListing> listings, long fetchedAtMillis) throws SQLException {
+        inTransaction(() -> replaceListingPageInternal(page, listings, fetchedAtMillis));
+    }
+
+    public synchronized void saveTransactionPage(int page, List<CompletedSale> sales, long fetchedAtMillis) throws SQLException {
+        inTransaction(() -> saveTransactionPageInternal(page, sales, fetchedAtMillis));
+    }
+
+    /** Listings, sales and freshness advance together; never turn file-read time into market-observation time. */
+    public synchronized void saveLocalSnapshot(LocalMarketSnapshot snapshot) throws SQLException {
+        inTransaction(() -> {
+            replaceListingPageInternal(1, snapshot.listings(), snapshot.observedAtMillis());
+            saveTransactionPageInternal(1, snapshot.sales(), snapshot.observedAtMillis());
+        });
+    }
+
+    private void inTransaction(SqlAction action) throws SQLException {
         requireInitialized();
         connection.setAutoCommit(false);
+        try {
+            action.run();
+            connection.commit();
+        } catch (SQLException | RuntimeException exception) {
+            connection.rollback();
+            throw exception;
+        } finally {
+            connection.setAutoCommit(true);
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlAction {
+        void run() throws SQLException;
+    }
+
+    private void replaceListingPageInternal(int page, List<AuctionListing> listings, long fetchedAtMillis) throws SQLException {
         try (PreparedStatement delete = connection.prepareStatement("DELETE FROM active_listings WHERE source_page = ?")) {
             delete.setInt(1, page);
             delete.executeUpdate();
@@ -230,18 +264,10 @@ public final class MarketDatabase implements AutoCloseable {
                 history.executeBatch();
             }
             recordFetchInternal("listings", page, fetchedAtMillis, listings.size());
-            connection.commit();
-        } catch (SQLException exception) {
-            connection.rollback();
-            throw exception;
-        } finally {
-            connection.setAutoCommit(true);
         }
     }
 
-    public synchronized void saveTransactionPage(int page, List<CompletedSale> sales, long fetchedAtMillis) throws SQLException {
-        requireInitialized();
-        connection.setAutoCommit(false);
+    private void saveTransactionPageInternal(int page, List<CompletedSale> sales, long fetchedAtMillis) throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO completed_sales (
                     sale_key, item_fingerprint, variant_comparable, item_id, item_name, quantity,
@@ -258,12 +284,6 @@ public final class MarketDatabase implements AutoCloseable {
             }
             insert.executeBatch();
             recordFetchInternal("transactions", page, fetchedAtMillis, sales.size());
-            connection.commit();
-        } catch (SQLException exception) {
-            connection.rollback();
-            throw exception;
-        } finally {
-            connection.setAutoCommit(true);
         }
     }
 

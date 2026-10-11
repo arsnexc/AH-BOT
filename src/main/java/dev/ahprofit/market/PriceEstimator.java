@@ -9,6 +9,7 @@ import java.math.MathContext;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.List;
 
 /** Robust, completed-sales-first resale-price estimator. Active asks only cap, never establish, value. */
@@ -16,6 +17,14 @@ public final class PriceEstimator {
     private static final long DAY_MILLIS = Duration.ofDays(1).toMillis();
     private static final long SEVEN_DAYS_MILLIS = Duration.ofDays(7).toMillis();
     private static final long HALF_LIFE_MILLIS = Duration.ofHours(36).toMillis();
+    /** Ask-based estimates have no sale velocity, so clearance is unknown rather than infinite. */
+    private static final double UNKNOWN_CLEARANCE_DAYS = 7.0;
+    /** An ask further than this many MADs from the median is treated as noise, not a market. */
+    private static final double OUTLIER_MAD_MULTIPLE = 3.0;
+    /** A spread wider than this is more likely a misread price than a real mispricing. */
+    private static final BigDecimal IMPLAUSIBLE_SPREAD_PERCENT = new BigDecimal("50");
+    /** Spread beyond which extra width stops adding confidence. */
+    private static final BigDecimal SPREAD_SATURATION_PERCENT = new BigDecimal("40");
     private static final BigDecimal ZERO = BigDecimal.ZERO;
 
     public PriceEstimate estimate(AuctionListing candidate, List<CompletedSale> allSales,
@@ -108,7 +117,242 @@ public final class PriceEstimator {
         return new PriceEstimate(fingerprint, median24h, median7d, conservative, trendPercent, volatility,
                 sales24h.size(), sales7d.size(), latestSale, unitVolume, competition.listingCount(),
                 competition.quantity(), lowestAsk, daysToClear, confidence, liquidity,
-                sufficientEvidence, flags);
+                sufficientEvidence, false, flags);
+    }
+
+    /**
+     * Market statistics for one item variant, computed once and shared by every candidate in it.
+     *
+     * <p>Without this the engine recomputes the median, the median absolute deviation and the
+     * outlier-screened minimum for every listing, which is quadratic in the number of listings of a
+     * single variant and made a 10,000-listing market take about a minute.
+     */
+    public record AskMarketStats(List<AuctionListing> credible, BigDecimal median, BigDecimal mad,
+                                 BigDecimal dispersion, int groupSize, BigDecimal groupQuantity,
+                                 BigDecimal cheapestPrice, String cheapestKey,
+                                 BigDecimal secondCheapestPrice, String secondCheapestKey) {
+        public AskMarketStats {
+            credible = List.copyOf(credible == null ? List.of() : credible);
+            median = median == null ? BigDecimal.ZERO : median;
+            mad = mad == null ? BigDecimal.ZERO : mad;
+            dispersion = dispersion == null ? BigDecimal.ZERO : dispersion;
+            groupQuantity = groupQuantity == null ? BigDecimal.ZERO : groupQuantity;
+        }
+
+        /**
+         * The cheapest credible ask that is not this listing. A listing cannot undercut itself, so
+         * when the candidate is the cheapest credible one the runner-up is the real competition.
+         */
+        public BigDecimal cheapestRivalPrice(String candidateKey) {
+            if (candidateKey != null && candidateKey.equals(cheapestKey)) {
+                return secondCheapestPrice;
+            }
+            return cheapestPrice;
+        }
+    }
+
+    /**
+     * Summarises every listing of one variant, candidate included, so that valuing each candidate
+     * in turn is a constant-time lookup rather than a fresh pass over the whole group.
+     *
+     * <p>The candidate's own ask is left inside the median and the deviation, because one listing
+     * among many moves them negligibly while removing it per candidate is what made this quadratic.
+     * It is still excluded from the competitive minimum, where it would be circular.
+     */
+    public static AskMarketStats summarise(List<AuctionListing> market) {
+        List<AuctionListing> safe = market == null ? List.of() : market;
+        if (safe.isEmpty()) {
+            return new AskMarketStats(List.of(), ZERO, ZERO, ZERO, 0, ZERO, null, null, null, null);
+        }
+        List<BigDecimal> asks = safe.stream().map(AuctionListing::unitPrice).toList();
+        BigDecimal marketMedian = median(asks);
+        BigDecimal mad = medianAbsoluteDeviation(asks, marketMedian);
+        BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
+                : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
+        List<AuctionListing> credible = credibleListings(safe, marketMedian, mad);
+        BigDecimal groupQuantity = ZERO;
+        for (AuctionListing listing : safe) {
+            groupQuantity = groupQuantity.add(BigDecimal.valueOf(listing.quantity()));
+        }
+        // The two cheapest credible asks, found in one pass. The runner-up is what the competitive
+        // price becomes when the candidate itself is the cheapest credible listing.
+        AuctionListing cheapest = null;
+        AuctionListing runnerUp = null;
+        for (AuctionListing listing : credible) {
+            if (cheapest == null || precedes(listing, cheapest)) {
+                runnerUp = cheapest;
+                cheapest = listing;
+            } else if (runnerUp == null || precedes(listing, runnerUp)) {
+                runnerUp = listing;
+            }
+        }
+        BigDecimal firstPrice = cheapest == null ? null : cheapest.unitPrice();
+        String firstKey = cheapest == null ? null : cheapest.listingKey();
+        BigDecimal secondPrice = runnerUp == null ? null : runnerUp.unitPrice();
+        String secondKey = runnerUp == null ? null : runnerUp.listingKey();
+        return new AskMarketStats(credible, marketMedian, mad, dispersion, safe.size(), groupQuantity,
+                firstPrice, firstKey, secondPrice, secondKey);
+    }
+
+    /**
+     * Values a candidate from the asking prices of comparable listings instead of completed sales.
+     *
+     * <p>This is the key-free path: with no API key there are no completed sales, so the only
+     * available signal is how far a listing undercuts the rest of the market for the same variant.
+     * The result is explicitly marked ask-based so it is never presented as sale evidence.
+     */
+    public PriceEstimate estimateFromAsks(AuctionListing candidate, List<AuctionListing> activeListings,
+                                          long nowMillis, int minimumListings, BigDecimal minimumSpreadPercent,
+                                          BigDecimal undercutPercent, int maximumListingAgeSeconds) {
+        List<AuctionListing> rivals = comparableListings(candidate, activeListings, nowMillis,
+                maximumListingAgeSeconds);
+        List<AuctionListing> group = new ArrayList<>(rivals);
+        group.add(candidate);
+        return estimateFromAsks(candidate, group, summarise(group), nowMillis, minimumListings,
+                minimumSpreadPercent, undercutPercent, maximumListingAgeSeconds);
+    }
+
+    /**
+     * Values a candidate from market statistics that were already computed for its variant.
+     *
+     * <p>The candidate's own ask is still excluded from the competitive minimum, because a listing
+     * cannot undercut itself, but it is left inside the median: one listing among many moves the
+     * median negligibly, and recomputing it per candidate is what made this quadratic.
+     */
+    public PriceEstimate estimateFromAsks(AuctionListing candidate, List<AuctionListing> market,
+                                          AskMarketStats statistics, long nowMillis, int minimumListings,
+                                          BigDecimal minimumSpreadPercent, BigDecimal undercutPercent,
+                                          int maximumListingAgeSeconds) {
+        String fingerprint = candidate.fingerprint().value();
+        if (!candidate.fingerprint().comparable()) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "item attributes are incomplete; this variant is not compared with other listings");
+        }
+
+        // Only rivals count as evidence. The candidate's own ask is the thing being valued, so
+        // counting it toward the minimum is circular and would let a single listing be a market.
+        int rivalCount = statistics.groupSize() - 1;
+        if (rivalCount < minimumListings) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "only " + rivalCount + " comparable rival listings are visible; at least "
+                            + minimumListings + " are needed to judge an asking-price spread");
+        }
+
+        BigDecimal marketMedian = statistics.median();
+        BigDecimal mad = statistics.mad();
+        BigDecimal dispersion = statistics.dispersion();
+
+        // To resell, the listing must undercut the cheapest rival a buyer would actually take, so
+        // that is the ceiling. The raw minimum is an extreme value, not an estimate: one manipulated
+        // or mis-keyed listing would otherwise set the resale price for the entire market, so asks
+        // too far from the median are discarded first.
+        List<AuctionListing> credible = statistics.credible();
+        BigDecimal lowestCompeting = statistics.cheapestRivalPrice(candidate.listingKey());
+        if (lowestCompeting == null) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "no credible rival asking price survives outlier screening, so there is no "
+                            + "market to undercut");
+        }
+
+        BigDecimal candidateUnit = candidate.unitPrice();
+        BigDecimal spreadPercent = Money.divide(marketMedian.subtract(candidateUnit), marketMedian)
+                .multiply(new BigDecimal("100"), MathContext.DECIMAL128);
+        boolean spreadSufficient = spreadPercent.compareTo(minimumSpreadPercent) >= 0;
+
+        BigDecimal target = lowestCompeting.multiply(BigDecimal.ONE.subtract(
+                Money.divide(undercutPercent, new BigDecimal("100")), MathContext.DECIMAL128), MathContext.DECIMAL128);
+        BigDecimal conservative = new BigDecimal(
+                target.max(BigDecimal.ONE).stripTrailingZeros().toPlainString());
+
+        boolean ceilingClearsAsk = target.compareTo(candidateUnit) > 0;
+        // A very wide spread is not proportionally more convincing: past a point it is far more
+        // likely to be a misread price or a variant that is not actually comparable than a genuine
+        // mispricing, so extra width must not keep raising confidence.
+        boolean spreadImplausible = spreadPercent.compareTo(IMPLAUSIBLE_SPREAD_PERCENT) > 0;
+
+        double listingFactor = Math.min(1.0, market.size() / (double) Math.max(1, minimumListings * 2));
+        // An implausible spread contributes almost nothing: width past a point is a symptom, not
+        // evidence, so it must not be able to outweigh the thin-market and dispersion penalties.
+        double spreadFactor = spreadImplausible ? 0.1
+                : clamp(Money.divide(spreadPercent, SPREAD_SATURATION_PERCENT).doubleValue(), 0, 1);
+        double dispersionFactor = 1.0 / (1.0 + 2.0 * dispersion.doubleValue());
+        double confidence = clamp(listingFactor * 0.4 + spreadFactor * 0.35 + dispersionFactor * 0.25, 0, 0.85);
+
+        LiquidityLevel liquidity = liquidityLevel(market.size() + 1, market.isEmpty() ? 0 : 1, market.size());
+        // The group already contains the candidate, so its quantity is counted exactly once.
+        BigDecimal visibleSupply = statistics.groupQuantity();
+
+        List<String> flags = new ArrayList<>();
+        flags.add("ASK-BASED estimate: derived from active asking prices, not completed sales");
+        if (!spreadSufficient) {
+            flags.add("asking-price spread " + Money.formatPercent(spreadPercent) + " is below the required "
+                    + Money.formatPercent(minimumSpreadPercent));
+        }
+        if (!ceilingClearsAsk) {
+            flags.add("the resale ceiling of " + Money.format(conservative)
+                    + " does not clear this listing's " + Money.format(candidateUnit)
+                    + " per unit, so no spread survives the fee and risk buffer");
+        }
+        if (market.size() < minimumListings * 2) {
+            flags.add("few comparable listings (" + (market.size() + 1) + "), so the market reference is thin");
+        }
+        if (dispersion.compareTo(new BigDecimal("0.35")) >= 0) {
+            flags.add("asking prices for this variant are widely dispersed");
+        }
+        if (credible.size() < market.size()) {
+            flags.add((market.size() - credible.size()) + " asking price(s) were ignored as outliers");
+        }
+        if (spreadImplausible) {
+            flags.add("the spread of " + Money.formatPercent(spreadPercent)
+                    + " is wide enough to suggest a misread price or a non-comparable variant");
+        }
+
+        return new PriceEstimate(fingerprint, null, marketMedian, conservative, null, dispersion,
+                0, 0, 0, BigDecimal.ZERO, market.size(), visibleSupply, lowestCompeting,
+                UNKNOWN_CLEARANCE_DAYS, confidence, liquidity,
+                spreadSufficient && ceilingClearsAsk && market.size() + 1 >= minimumListings,
+                true, flags);
+    }
+
+    /**
+     * Listings whose asking price is close enough to the median to describe the market. The band is
+     * the wider of three MADs and half the median, so it still rejects a stray dump when every
+     * genuine ask is identical and the MAD collapses to zero.
+     */
+    /** Cheaper first, then by listing key so the order is deterministic between equal prices. */
+    private static boolean precedes(AuctionListing left, AuctionListing right) {
+        int byPrice = left.unitPrice().compareTo(right.unitPrice());
+        return byPrice != 0 ? byPrice < 0 : left.listingKey().compareTo(right.listingKey()) < 0;
+    }
+
+    private static List<AuctionListing> credibleListings(List<AuctionListing> market, BigDecimal median,
+                                                         BigDecimal mad) {
+        if (market.isEmpty()) {
+            return market;
+        }
+        BigDecimal relativeBand = Money.percentOf(median, new BigDecimal("50"));
+        BigDecimal band = mad.multiply(BigDecimal.valueOf(OUTLIER_MAD_MULTIPLE)).max(relativeBand);
+        List<AuctionListing> credible = market.stream()
+                .filter(listing -> listing.unitPrice().subtract(median).abs().compareTo(band) <= 0)
+                .toList();
+        return credible.isEmpty() ? market : credible;
+    }
+
+    private static List<AuctionListing> comparableListings(AuctionListing candidate, List<AuctionListing> listings,
+                                                           long nowMillis, int maxAgeSeconds) {
+        long oldestAllowed = nowMillis - Duration.ofSeconds(maxAgeSeconds).toMillis();
+        List<AuctionListing> result = new ArrayList<>();
+        for (AuctionListing listing : listings) {
+            if (listing.listingKey().equals(candidate.listingKey())
+                    || !listing.fingerprint().comparable()
+                    || !listing.fingerprint().value().equals(candidate.fingerprint().value())
+                    || listing.observedAtMillis() < oldestAllowed
+                    || listing.expiresAtMillis() <= nowMillis) {
+                continue;
+            }
+            result.add(listing);
+        }
+        return result;
     }
 
     private static Competition competition(AuctionListing candidate, List<AuctionListing> listings,

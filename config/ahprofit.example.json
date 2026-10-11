@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "username": "",
   "balanceMode": "manual",
+  "marketDataMode": "auto",
   "manualBalance": "0",
   "manualBalanceUpdatedAtMillis": 0,
   "reservePercent": "20",
@@ -32,5 +33,38 @@
     "CONTAINERS",
     "OTHER"
   ],
-  "excludedItems": []
+  "excludedItems": [],
+  "minimumConfidence": "0.50",
+  "maximumDaysToClear": 14,
+  "automationEnabled": false,
+  "automationDryRun": true,
+  "automationMaxSpendPerAction": "500000",
+  "automationMaxSpendPerHour": "5000000",
+  "automationMaxActionsPerHour": 12,
+  "automationCooldownSeconds": 10,
+  "automationMinimumScore": "55",
+  "automationSellSlot": -1,
+  "askOnlyAnalysis": false,
+  "askMinimumListings": 2,
+  "askMinimumSpreadPercent": 15,
+  "askUndercutPercent": "2",
+  "automationConfirmSlot": -1,
+  "askMinimumRoiPercent": 5,
+  "serverProfile": {
+    "name": "",
+    "currencyWords": [
+      "cash",
+      "coins",
+      "credits",
+      "dollars",
+      "emeralds",
+      "gems",
+      "mints",
+      "money",
+      "tokens",
+      "usd"
+    ],
+    "pricePattern": "",
+    "assumedTimeLeftSeconds": 600
+  }
 }

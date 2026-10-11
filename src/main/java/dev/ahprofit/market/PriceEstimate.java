@@ -21,6 +21,7 @@ public record PriceEstimate(
         double confidence,
         LiquidityLevel liquidity,
         boolean sufficientEvidence,
+        boolean askBased,
         List<String> flags
 ) {
     public PriceEstimate {
@@ -40,6 +41,6 @@ public record PriceEstimate(
     public static PriceEstimate noEvidence(String fingerprint, String reason) {
         return new PriceEstimate(fingerprint, null, null, null, null, null,
                 0, 0, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO, null,
-                Double.POSITIVE_INFINITY, 0, LiquidityLevel.UNKNOWN, false, List.of(reason));
+                Double.POSITIVE_INFINITY, 0, LiquidityLevel.UNKNOWN, false, false, List.of(reason));
     }
 }

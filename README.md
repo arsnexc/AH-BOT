@@ -195,6 +195,29 @@ Suggested first use:
 
 Browse the auction house while recording is on, then `/ahprofit refresh` and `/ahprofit status` to see the ranked flips. `/ahprofit ah probe` with the auction house open prints the menu title, how many slots hold items, how many of those had a readable price, and the raw lore lines. It also prints the market-data mode, the scanner status, and — when nothing ranked — exactly which filter dropped each listing. That output is the fastest way to find out whether the menu is unread, the prices are unparsed, the data never arrived, or the analysis produced nothing.
 
+### Simulation and measured limits
+
+`ModLimitsSimulationTest` generates synthetic markets with a **known ground truth** — the price at which a unit actually clears — and scores the estimator against it rather than against itself. It runs on every build and fails if a limit is breached.
+
+| Limit | Measured | Verdict |
+| --- | --- | --- |
+| Precision (ranked flips that were genuinely mispriced) | **100%** (13/13) | Sound. Every recommended flip was real. |
+| Recall (genuine flips found) | **17%** (13/75) | Deliberately low. Missing a flip costs an opportunity; a wrong one costs money. |
+| Resale ceiling above the true clearing price | **3.6%** (12/334) | Inherent, not a defect: when the cheapest ask already sits above the clearing price, undercutting it still lands above it. The risk buffer is what covers it. |
+| Worst net profit when resold at the true clearing price | **+16,911** | No ranked flip lost money. |
+| Dump contamination | **0/120** markets affected | One mis-keyed listing cannot move the ceiling. |
+| Confidence calibration | 97–100% of ceilings within truth at every bucket 0.6–0.9 | Higher stated confidence does mean a safer estimate. |
+| Throughput, 10,006 listings of one variant | **155 ms** | Linear. Was 61 seconds before the per-variant statistics were cached. |
+| Degenerate markets | 1 rival, 0 rivals, all-identical asks, stale, expired | All correctly refused evidence. |
+
+Two things the simulation found and fixed:
+
+**A rival listing was its own market evidence.** The evidence count included the candidate, so with `askMinimumListings` at its default of 2 a single rival listing was enough to value a candidate. A listing cannot be evidence about itself.
+
+**Valuing each candidate was quadratic.** Market statistics were recomputed for every listing, and `Map.getOrDefault` evaluated its default argument every call — putting the cost straight back even after the cache was added. 10,000 listings took 61 seconds; they now take 155 ms.
+
+To read the numbers yourself, run the tests and look for the simulation report in the output, or set a breakpoint on the report.
+
 ### When something does not work
 
 Run `/ahprofit ah probe` with the auction house open. It prints the open screen's class, the container menu's id and title, whether AhProfit recognises it as a readable menu, how many slots hold items, how many of those have a price the lore parser can read, and the raw lore lines of the first few items. It then prints the market-data mode, whether a key is present, the scanner status, how many opportunities the last analysis produced, and how many of those are ask-based.

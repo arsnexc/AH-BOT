@@ -170,9 +170,10 @@ public final class PriceEstimator {
         BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
                 : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
         List<AuctionListing> credible = credibleListings(safe, marketMedian, mad);
-        BigDecimal groupQuantity = safe.stream()
-                .map(listing -> BigDecimal.valueOf(listing.quantity()))
-                .reduce(ZERO, BigDecimal::add);
+        BigDecimal groupQuantity = ZERO;
+        for (AuctionListing listing : safe) {
+            groupQuantity = groupQuantity.add(BigDecimal.valueOf(listing.quantity()));
+        }
         List<AuctionListing> cheapest = credible.stream()
                 .sorted(java.util.Comparator.comparing(AuctionListing::unitPrice)
                         .thenComparing(AuctionListing::listingKey))

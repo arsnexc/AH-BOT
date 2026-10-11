@@ -71,15 +71,7 @@ public final class LorePriceParser {
     private static final BigDecimal MAXIMUM = new BigDecimal("1000000000000000");
 
     public static BigDecimal findPrice(List<String> lines) {
-        return findPrice(lines, null);
-    }
-
-    /**
-     * @param profile how this server writes prices; null uses the built-in currency words and no
-     *                custom pattern.
-     */
-    public static BigDecimal findPrice(List<String> lines, dev.ahprofit.config.ServerProfile profile) {
-        return findPrice(lines, null, null, profile);
+        return findPrice(lines, null, null, null);
     }
 
     /**
@@ -92,6 +84,8 @@ public final class LorePriceParser {
     /**
      * @param extraLines further text to search, such as custom-data components or a full tooltip.
      *                 Searched after the lore and the display name, before giving up.
+     * @param profile   how this server writes prices; null uses the built-in currency words and no
+     *                 custom pattern.
      */
     public static BigDecimal findPrice(List<String> lines, String extraLine, List<String> extraLines,
                                        dev.ahprofit.config.ServerProfile profile) {

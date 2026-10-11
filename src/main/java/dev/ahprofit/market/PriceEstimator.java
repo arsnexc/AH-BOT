@@ -174,14 +174,22 @@ public final class PriceEstimator {
         for (AuctionListing listing : safe) {
             groupQuantity = groupQuantity.add(BigDecimal.valueOf(listing.quantity()));
         }
-        List<AuctionListing> cheapest = credible.stream()
-                .sorted(java.util.Comparator.comparing(AuctionListing::unitPrice)
-                        .thenComparing(AuctionListing::listingKey))
-                .toList();
-        BigDecimal firstPrice = cheapest.isEmpty() ? null : cheapest.get(0).unitPrice();
-        String firstKey = cheapest.isEmpty() ? null : cheapest.get(0).listingKey();
-        BigDecimal secondPrice = cheapest.size() > 1 ? cheapest.get(1).unitPrice() : null;
-        String secondKey = cheapest.size() > 1 ? cheapest.get(1).listingKey() : null;
+        // The two cheapest credible asks, found in one pass. The runner-up is what the competitive
+        // price becomes when the candidate itself is the cheapest credible listing.
+        AuctionListing cheapest = null;
+        AuctionListing runnerUp = null;
+        for (AuctionListing listing : credible) {
+            if (cheapest == null || precedes(listing, cheapest)) {
+                runnerUp = cheapest;
+                cheapest = listing;
+            } else if (runnerUp == null || precedes(listing, runnerUp)) {
+                runnerUp = listing;
+            }
+        }
+        BigDecimal firstPrice = cheapest == null ? null : cheapest.unitPrice();
+        String firstKey = cheapest == null ? null : cheapest.listingKey();
+        BigDecimal secondPrice = runnerUp == null ? null : runnerUp.unitPrice();
+        String secondKey = runnerUp == null ? null : runnerUp.listingKey();
         return new AskMarketStats(credible, marketMedian, mad, dispersion, safe.size(), groupQuantity,
                 firstPrice, firstKey, secondPrice, secondKey);
     }
@@ -311,6 +319,12 @@ public final class PriceEstimator {
      * the wider of three MADs and half the median, so it still rejects a stray dump when every
      * genuine ask is identical and the MAD collapses to zero.
      */
+    /** Cheaper first, then by listing key so the order is deterministic between equal prices. */
+    private static boolean precedes(AuctionListing left, AuctionListing right) {
+        int byPrice = left.unitPrice().compareTo(right.unitPrice());
+        return byPrice != 0 ? byPrice < 0 : left.listingKey().compareTo(right.listingKey()) < 0;
+    }
+
     private static List<AuctionListing> credibleListings(List<AuctionListing> market, BigDecimal median,
                                                          BigDecimal mad) {
         if (market.isEmpty()) {

@@ -115,11 +115,16 @@ public final class OpportunityEngine {
             if (config.askOnlyAnalysis() && exactSales.isEmpty()) {
                 // The fresh group for this variant, candidate included, with its statistics
                 // already summarised once rather than recomputed for every listing.
-                List<AuctionListing> group = freshByFingerprint.getOrDefault(
-                        listing.fingerprint().value(), List.of());
-                estimate = priceEstimator.estimateFromAsks(listing, group,
-                        statsByFingerprint.getOrDefault(listing.fingerprint().value(),
-                                PriceEstimator.summarise(group)),
+                String variant = listing.fingerprint().value();
+                List<AuctionListing> group = freshByFingerprint.getOrDefault(variant, List.of());
+                // getOrDefault would evaluate its argument every time, which would put the
+                // quadratic cost straight back, so the cache is checked explicitly.
+                PriceEstimator.AskMarketStats statistics = statsByFingerprint.get(variant);
+                if (statistics == null) {
+                    statistics = PriceEstimator.summarise(group);
+                    statsByFingerprint.put(variant, statistics);
+                }
+                estimate = priceEstimator.estimateFromAsks(listing, group, statistics,
                         nowMillis, config.askMinimumListings(), config.askMinimumSpreadPercent(),
                         config.askUndercutPercent(), config.maxDataAgeSeconds());
             } else {

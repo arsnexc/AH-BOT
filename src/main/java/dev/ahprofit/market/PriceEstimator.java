@@ -174,11 +174,12 @@ public final class PriceEstimator {
         boolean spreadImplausible = spreadPercent.compareTo(IMPLAUSIBLE_SPREAD_PERCENT) > 0;
 
         double listingFactor = Math.min(1.0, market.size() / (double) Math.max(1, minimumListings * 2));
-        double spreadFactor = clamp(Money.divide(spreadPercent, SPREAD_SATURATION_PERCENT).doubleValue(), 0, 1);
+        // An implausible spread contributes almost nothing: width past a point is a symptom, not
+        // evidence, so it must not be able to outweigh the thin-market and dispersion penalties.
+        double spreadFactor = spreadImplausible ? 0.1
+                : clamp(Money.divide(spreadPercent, SPREAD_SATURATION_PERCENT).doubleValue(), 0, 1);
         double dispersionFactor = 1.0 / (1.0 + 2.0 * dispersion.doubleValue());
-        double plausibilityFactor = spreadImplausible ? 0.2 : 1.0;
-        double confidence = clamp(listingFactor * 0.4 + spreadFactor * 0.25 + dispersionFactor * 0.2
-                + plausibilityFactor * 0.15, 0, 0.85);
+        double confidence = clamp(listingFactor * 0.4 + spreadFactor * 0.35 + dispersionFactor * 0.25, 0, 0.85);
 
         LiquidityLevel liquidity = liquidityLevel(market.size() + 1, market.isEmpty() ? 0 : 1, market.size());
         BigDecimal visibleSupply = market.stream()

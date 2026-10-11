@@ -275,14 +275,17 @@ class ModLimitsSimulationTest {
                     "bulk-" + index));
         }
         // A second, ordinary variant that does contain genuine mispricing, so the pipeline is
-        // exercised end to end at scale rather than only on the worst-case group.
+        // exercised end to end at scale rather than only on the worst-case group. The one deeply
+        // mispriced listing has to sit well below its rivals, because the ceiling is set by the
+        // cheapest rival and a listing cannot undercut itself.
         ApiItem emerald = simulator.otherItem("minecraft:emerald", 16);
         for (int index = 0; index < 100; index++) {
             huge.add(simulator.listingOf(emerald, now, 900.0, "emerald-" + index));
         }
-        for (int index = 0; index < 6; index++) {
-            huge.add(simulator.listingOf(emerald, now, 700.0, "emerald-cheap-" + index));
+        for (int index = 0; index < 5; index++) {
+            huge.add(simulator.listingOf(emerald, now, 700.0 + index * 10.0, "emerald-mid-" + index));
         }
+        huge.add(simulator.listingOf(emerald, now, 500.0, "emerald-mispriced"));
 
         long started = System.nanoTime();
         var analysis = engine.analyze(huge, List.of(), config, now, now);

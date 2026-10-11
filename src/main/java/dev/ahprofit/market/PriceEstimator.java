@@ -128,27 +128,61 @@ public final class PriceEstimator {
      * single variant and made a 10,000-listing market take about a minute.
      */
     public record AskMarketStats(List<AuctionListing> credible, BigDecimal median, BigDecimal mad,
-                                 BigDecimal dispersion) {
+                                 BigDecimal dispersion, int groupSize, BigDecimal groupQuantity,
+                                 BigDecimal cheapestPrice, String cheapestKey,
+                                 BigDecimal secondCheapestPrice, String secondCheapestKey) {
         public AskMarketStats {
             credible = List.copyOf(credible == null ? List.of() : credible);
             median = median == null ? BigDecimal.ZERO : median;
             mad = mad == null ? BigDecimal.ZERO : mad;
             dispersion = dispersion == null ? BigDecimal.ZERO : dispersion;
+            groupQuantity = groupQuantity == null ? BigDecimal.ZERO : groupQuantity;
+        }
+
+        /**
+         * The cheapest credible ask that is not this listing. A listing cannot undercut itself, so
+         * when the candidate is the cheapest credible one the runner-up is the real competition.
+         */
+        public BigDecimal cheapestRivalPrice(String candidateKey) {
+            if (candidateKey != null && candidateKey.equals(cheapestKey)) {
+                return secondCheapestPrice;
+            }
+            return cheapestPrice;
         }
     }
 
-    /** Summarises a group of comparable listings for one variant. */
+    /**
+     * Summarises every listing of one variant, candidate included, so that valuing each candidate
+     * in turn is a constant-time lookup rather than a fresh pass over the whole group.
+     *
+     * <p>The candidate's own ask is left inside the median and the deviation, because one listing
+     * among many moves them negligibly while removing it per candidate is what made this quadratic.
+     * It is still excluded from the competitive minimum, where it would be circular.
+     */
     public static AskMarketStats summarise(List<AuctionListing> market) {
         List<AuctionListing> safe = market == null ? List.of() : market;
         if (safe.isEmpty()) {
-            return new AskMarketStats(List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            return new AskMarketStats(List.of(), ZERO, ZERO, ZERO, 0, ZERO, null, null, null, null);
         }
         List<BigDecimal> asks = safe.stream().map(AuctionListing::unitPrice).toList();
         BigDecimal marketMedian = median(asks);
         BigDecimal mad = medianAbsoluteDeviation(asks, marketMedian);
         BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
                 : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
-        return new AskMarketStats(credibleListings(safe, marketMedian, mad), marketMedian, mad, dispersion);
+        List<AuctionListing> credible = credibleListings(safe, marketMedian, mad);
+        BigDecimal groupQuantity = safe.stream()
+                .map(listing -> BigDecimal.valueOf(listing.quantity()))
+                .reduce(ZERO, BigDecimal::add);
+        List<AuctionListing> cheapest = credible.stream()
+                .sorted(java.util.Comparator.comparing(AuctionListing::unitPrice)
+                        .thenComparing(AuctionListing::listingKey))
+                .toList();
+        BigDecimal firstPrice = cheapest.isEmpty() ? null : cheapest.get(0).unitPrice();
+        String firstKey = cheapest.isEmpty() ? null : cheapest.get(0).listingKey();
+        BigDecimal secondPrice = cheapest.size() > 1 ? cheapest.get(1).unitPrice() : null;
+        String secondKey = cheapest.size() > 1 ? cheapest.get(1).listingKey() : null;
+        return new AskMarketStats(credible, marketMedian, mad, dispersion, safe.size(), groupQuantity,
+                firstPrice, firstKey, secondPrice, secondKey);
     }
 
     /**
@@ -161,9 +195,11 @@ public final class PriceEstimator {
     public PriceEstimate estimateFromAsks(AuctionListing candidate, List<AuctionListing> activeListings,
                                           long nowMillis, int minimumListings, BigDecimal minimumSpreadPercent,
                                           BigDecimal undercutPercent, int maximumListingAgeSeconds) {
-        List<AuctionListing> market = comparableListings(candidate, activeListings, nowMillis,
+        List<AuctionListing> rivals = comparableListings(candidate, activeListings, nowMillis,
                 maximumListingAgeSeconds);
-        return estimateFromAsks(candidate, market, summarise(market), nowMillis, minimumListings,
+        List<AuctionListing> group = new ArrayList<>(rivals);
+        group.add(candidate);
+        return estimateFromAsks(candidate, group, summarise(group), nowMillis, minimumListings,
                 minimumSpreadPercent, undercutPercent, maximumListingAgeSeconds);
     }
 
@@ -186,9 +222,10 @@ public final class PriceEstimator {
 
         // Only rivals count as evidence. The candidate's own ask is the thing being valued, so
         // counting it toward the minimum is circular and would let a single listing be a market.
-        if (market.size() < minimumListings) {
+        int rivalCount = statistics.groupSize() - 1;
+        if (rivalCount < minimumListings) {
             return PriceEstimate.noEvidence(fingerprint,
-                    "only " + market.size() + " comparable rival listings are visible; at least "
+                    "only " + rivalCount + " comparable rival listings are visible; at least "
                             + minimumListings + " are needed to judge an asking-price spread");
         }
 
@@ -201,15 +238,12 @@ public final class PriceEstimator {
         // or mis-keyed listing would otherwise set the resale price for the entire market, so asks
         // too far from the median are discarded first.
         List<AuctionListing> credible = statistics.credible();
-        BigDecimal lowestCompeting = credible.stream()
-                .filter(listing -> !listing.listingKey().equals(candidate.listingKey()))
-                .map(AuctionListing::unitPrice)
-                .min(BigDecimal::compareTo)
-                .orElseGet(() -> market.stream()
-                        .filter(listing -> !listing.listingKey().equals(candidate.listingKey()))
-                        .map(AuctionListing::unitPrice)
-                        .min(BigDecimal::compareTo)
-                        .orElse(marketMedian));
+        BigDecimal lowestCompeting = statistics.cheapestRivalPrice(candidate.listingKey());
+        if (lowestCompeting == null) {
+            return PriceEstimate.noEvidence(fingerprint,
+                    "no credible rival asking price survives outlier screening, so there is no "
+                            + "market to undercut");
+        }
 
         BigDecimal candidateUnit = candidate.unitPrice();
         BigDecimal spreadPercent = Money.divide(marketMedian.subtract(candidateUnit), marketMedian)
@@ -236,10 +270,8 @@ public final class PriceEstimator {
         double confidence = clamp(listingFactor * 0.4 + spreadFactor * 0.35 + dispersionFactor * 0.25, 0, 0.85);
 
         LiquidityLevel liquidity = liquidityLevel(market.size() + 1, market.isEmpty() ? 0 : 1, market.size());
-        BigDecimal visibleSupply = market.stream()
-                .map(listing -> BigDecimal.valueOf(listing.quantity()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .add(BigDecimal.valueOf(candidate.quantity()));
+        // The group already contains the candidate, so its quantity is counted exactly once.
+        BigDecimal visibleSupply = statistics.groupQuantity();
 
         List<String> flags = new ArrayList<>();
         flags.add("ASK-BASED estimate: derived from active asking prices, not completed sales");

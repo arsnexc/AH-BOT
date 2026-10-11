@@ -113,9 +113,13 @@ public final class OpportunityEngine {
             List<AuctionListing> exactListings = listingsByFingerprint.getOrDefault(listing.fingerprint().value(), List.of());
             PriceEstimate estimate;
             if (config.askOnlyAnalysis() && exactSales.isEmpty()) {
-                estimate = priceEstimator.estimateFromAsks(listing, exactListings,
+                // The fresh group for this variant, candidate included, with its statistics
+                // already summarised once rather than recomputed for every listing.
+                List<AuctionListing> group = freshByFingerprint.getOrDefault(
+                        listing.fingerprint().value(), List.of());
+                estimate = priceEstimator.estimateFromAsks(listing, group,
                         statsByFingerprint.getOrDefault(listing.fingerprint().value(),
-                                PriceEstimator.summarise(exactListings)),
+                                PriceEstimator.summarise(group)),
                         nowMillis, config.askMinimumListings(), config.askMinimumSpreadPercent(),
                         config.askUndercutPercent(), config.maxDataAgeSeconds());
             } else {
@@ -132,7 +136,8 @@ public final class OpportunityEngine {
                 // confidence, and clearance gates do not apply because there are no sales.
                 if (!estimate.sufficientEvidence()) {
                     uncertain++;
-                    if (exactListings.size() < config.askMinimumListings()) {
+                    if (freshByFingerprint.getOrDefault(listing.fingerprint().value(), List.of()).size() - 1
+                            < config.askMinimumListings()) {
                         rejectedNoRival++;
                     } else {
                         rejectedSpreadTooSmall++;

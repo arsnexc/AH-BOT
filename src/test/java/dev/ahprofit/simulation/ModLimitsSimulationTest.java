@@ -49,7 +49,6 @@ class ModLimitsSimulationTest {
         enginePrecisionAndRecall(simulator, now);
         scaleAndThroughput(simulator, now);
 
-        failures.add("REPORT");
         System.out.println(report.render());
         assertTrue(failures.isEmpty(), "simulation limits were breached:\n  "
                 + String.join("\n  ", failures) + "\n\n" + report.render());

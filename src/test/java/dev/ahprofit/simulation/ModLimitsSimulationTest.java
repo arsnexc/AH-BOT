@@ -1,5 +1,6 @@
 package dev.ahprofit.simulation;
 
+import dev.ahprofit.api.ApiItem;
 import dev.ahprofit.api.AuctionListing;
 import dev.ahprofit.config.AhProfitConfig;
 import dev.ahprofit.market.OpportunityEngine;
@@ -48,7 +49,6 @@ class ModLimitsSimulationTest {
         enginePrecisionAndRecall(simulator, now);
         scaleAndThroughput(simulator, now);
 
-        failures.add("REPORT"); // temporary: surface the measurements
         System.out.println(report.render());
         assertTrue(failures.isEmpty(), "simulation limits were breached:\n  "
                 + String.join("\n  ", failures) + "\n\n" + report.render());
@@ -268,27 +268,39 @@ class ModLimitsSimulationTest {
     private void scaleAndThroughput(MarketSimulator simulator, long now) {
         AhProfitConfig config = simulator.bankroll("2000000", now).withAskOnlyAnalysis(true);
         OpportunityEngine engine = new OpportunityEngine();
+        // One huge variant is the worst case: every candidate is compared against every other.
         List<AuctionListing> huge = new java.util.ArrayList<>();
-        for (int index = 0; index < 10_000; index++) {
-            // Most listings sit near the clearing price; a small tail is genuinely mispriced.
-            double markup = index % 50 == 0 ? 0.45 + simulator.nextUniform() * 0.2
-                    : 1.0 + simulator.nextUniform() * 0.12;
-            huge.add(simulator.rival(now, TRUE_UNIT, markup, "bulk-" + index));
+        for (int index = 0; index < 9_900; index++) {
+            huge.add(simulator.rival(now, TRUE_UNIT, 1.0 + simulator.nextUniform() * 0.12,
+                    "bulk-" + index));
         }
+        // A second, ordinary variant that does contain genuine mispricing, so the pipeline is
+        // exercised end to end at scale rather than only on the worst-case group.
+        ApiItem emerald = simulator.otherItem("minecraft:emerald", 16);
+        for (int index = 0; index < 100; index++) {
+            huge.add(simulator.listingOf(emerald, now, 900.0, "emerald-" + index));
+        }
+        for (int index = 0; index < 6; index++) {
+            huge.add(simulator.listingOf(emerald, now, 700.0, "emerald-cheap-" + index));
+        }
+
         long started = System.nanoTime();
         var analysis = engine.analyze(huge, List.of(), config, now, now);
         long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
 
         report.count("scale: listings analysed", analysis.analyzedListings());
         report.count("scale: opportunities produced", analysis.opportunities().size());
-        report.finding("10,000 listings analysed in " + elapsedMillis + " ms, producing "
+        report.finding("10,006 listings analysed in " + elapsedMillis + " ms, producing "
                 + analysis.opportunities().size() + " opportunities");
         if (analysis.opportunities().size() > config.maxRecommendations()) {
             failure("the engine produced more opportunities than the configured maximum of "
                     + config.maxRecommendations());
         }
-        if (elapsedMillis > 60_000) {
-            failure("10,000 listings took " + elapsedMillis + " ms, which is too slow to be usable");
+        if (elapsedMillis > 15_000) {
+            failure("10,006 listings took " + elapsedMillis + " ms, which is too slow to be usable");
+        }
+        if (analysis.opportunities().isEmpty()) {
+            failure("a market that contains genuine mispricing produced nothing at scale");
         }
     }
 

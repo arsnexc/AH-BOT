@@ -36,6 +36,21 @@ final class MarketSimulator {
         return item;
     }
 
+    /** A different item, so a scale market can mix one huge variant with a normal one. */
+    ApiItem otherItem(String id, int count) {
+        return TestMarketFixtures.item(id, count);
+    }
+
+    AuctionListing listingOf(ApiItem item, long now, double unitPrice, String seller) {
+        BigDecimal total = BigDecimal.valueOf(unitPrice)
+                .multiply(BigDecimal.valueOf(item.count()))
+                .setScale(0, RoundingMode.HALF_UP);
+        if (total.signum() <= 0) {
+            total = BigDecimal.ONE;
+        }
+        return TestMarketFixtures.listing(item, total.toPlainString(), now, seller);
+    }
+
     /** A uniform draw in [0,1), so scenarios stay reproducible from the seed. */
     double nextUniform() {
         return random.nextDouble();

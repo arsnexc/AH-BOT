@@ -84,6 +84,14 @@ public final class LorePriceParser {
     /**
      * @param extraLines further text to search, such as custom-data components or a full tooltip.
      *                 Searched after the lore and the display name, before giving up.
+     */
+    public static BigDecimal findPrice(List<String> lines, String extraLine, List<String> extraLines) {
+        return findPrice(lines, extraLine, extraLines, null);
+    }
+
+    /**
+     * @param extraLines further text to search, such as custom-data components or a full tooltip.
+     *                 Searched after the lore and the display name, before giving up.
      * @param profile   how this server writes prices; null uses the built-in currency words and no
      *                 custom pattern.
      */

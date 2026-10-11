@@ -558,7 +558,7 @@ public final class AhProfitCommands {
         source.sendFeedback(Component.literal("AH recorder: " + (recorder.isRecording() ? "RECORDING" : "stopped")
                 + " | " + recorder.status()));
         source.sendFeedback(Component.literal("Bought this session: " + automation.holdingsSummary()));
-        ServerProfile profile = configManager.get().serverProfile();
+        ServerProfile profile = config.serverProfile();
         source.sendFeedback(Component.literal("Server: " + profile.displayName()
                 + " | currency words " + profile.sortedCurrencyWords().size()
                 + (profile.hasCustomPattern() ? " | custom price pattern set" : "")));

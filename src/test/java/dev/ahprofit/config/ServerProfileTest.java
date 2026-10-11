@@ -29,8 +29,14 @@ final class ServerProfileTest {
     @Test
     @DisplayName("Currency words are lower-cased, de-duplicated and never left empty")
     void currencyWordsAreNormalised() {
-        ServerProfile profile = new ServerProfile("x",
-                new LinkedHashSet<>(List.of("Mints", "mints", " CASH ", "", null)), "", 600);
+        // List.of rejects nulls, so build the set the way a hand-edited config file would arrive.
+        Set<String> messy = new LinkedHashSet<>();
+        messy.add("Mints");
+        messy.add("mints");
+        messy.add(" CASH ");
+        messy.add("");
+        messy.add(null);
+        ServerProfile profile = new ServerProfile("x", messy, "", 600);
         assertEquals(Set.of("mints", "cash"), profile.currencyWords());
         assertEquals(List.of("cash", "mints"), profile.sortedCurrencyWords());
         assertEquals(ServerProfile.defaults().currencyWords(), new ServerProfile("x", Set.of(), "", 600).currencyWords());

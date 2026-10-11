@@ -55,8 +55,8 @@ final class ServerProfilePriceParsingTest {
     @DisplayName("A currency word no default covers is only read once the profile declares it")
     void novelCurrencyWordNeedsAProfile() {
         ServerProfile souls = new ServerProfile("SoulSMP", Set.of("souls"), "", 600);
-        assertNoPrice(null, "Only 1234 souls for a stack");
-        assertPrice("1234", souls, "Only 1234 souls for a stack");
+        assertNoPrice(null, "Only 1234 souls for a full set");
+        assertPrice("1234", souls, "Only 1234 souls for a full set");
     }
 
     @Test
@@ -88,8 +88,8 @@ final class ServerProfilePriceParsingTest {
     void patternMatchesWithoutAKeyword() {
         ServerProfile profile = new ServerProfile("OddSMP", Set.of("cash"),
                 "\\b([0-9][0-9.,]*)\\s*souls\\b", 600);
-        assertNoPrice(null, "Only 1234 souls for a stack");
-        assertPrice("1234", profile, "Only 1234 souls for a stack");
+        assertNoPrice(null, "Only 1234 souls for a full set");
+        assertPrice("1234", profile, "Only 1234 souls for a full set");
     }
 
     @Test

@@ -121,6 +121,37 @@ public final class PriceEstimator {
     }
 
     /**
+     * Market statistics for one item variant, computed once and shared by every candidate in it.
+     *
+     * <p>Without this the engine recomputes the median, the median absolute deviation and the
+     * outlier-screened minimum for every listing, which is quadratic in the number of listings of a
+     * single variant and made a 10,000-listing market take about a minute.
+     */
+    public record AskMarketStats(List<AuctionListing> credible, BigDecimal median, BigDecimal mad,
+                                 BigDecimal dispersion) {
+        public AskMarketStats {
+            credible = List.copyOf(credible == null ? List.of() : credible);
+            median = median == null ? BigDecimal.ZERO : median;
+            mad = mad == null ? BigDecimal.ZERO : mad;
+            dispersion = dispersion == null ? BigDecimal.ZERO : dispersion;
+        }
+    }
+
+    /** Summarises a group of comparable listings for one variant. */
+    public static AskMarketStats summarise(List<AuctionListing> market) {
+        List<AuctionListing> safe = market == null ? List.of() : market;
+        if (safe.isEmpty()) {
+            return new AskMarketStats(List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+        List<BigDecimal> asks = safe.stream().map(AuctionListing::unitPrice).toList();
+        BigDecimal marketMedian = median(asks);
+        BigDecimal mad = medianAbsoluteDeviation(asks, marketMedian);
+        BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
+                : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
+        return new AskMarketStats(credibleListings(safe, marketMedian, mad), marketMedian, mad, dispersion);
+    }
+
+    /**
      * Values a candidate from the asking prices of comparable listings instead of completed sales.
      *
      * <p>This is the key-free path: with no API key there are no completed sales, so the only
@@ -130,13 +161,29 @@ public final class PriceEstimator {
     public PriceEstimate estimateFromAsks(AuctionListing candidate, List<AuctionListing> activeListings,
                                           long nowMillis, int minimumListings, BigDecimal minimumSpreadPercent,
                                           BigDecimal undercutPercent, int maximumListingAgeSeconds) {
+        List<AuctionListing> market = comparableListings(candidate, activeListings, nowMillis,
+                maximumListingAgeSeconds);
+        return estimateFromAsks(candidate, market, summarise(market), nowMillis, minimumListings,
+                minimumSpreadPercent, undercutPercent, maximumListingAgeSeconds);
+    }
+
+    /**
+     * Values a candidate from market statistics that were already computed for its variant.
+     *
+     * <p>The candidate's own ask is still excluded from the competitive minimum, because a listing
+     * cannot undercut itself, but it is left inside the median: one listing among many moves the
+     * median negligibly, and recomputing it per candidate is what made this quadratic.
+     */
+    public PriceEstimate estimateFromAsks(AuctionListing candidate, List<AuctionListing> market,
+                                          AskMarketStats statistics, long nowMillis, int minimumListings,
+                                          BigDecimal minimumSpreadPercent, BigDecimal undercutPercent,
+                                          int maximumListingAgeSeconds) {
         String fingerprint = candidate.fingerprint().value();
         if (!candidate.fingerprint().comparable()) {
             return PriceEstimate.noEvidence(fingerprint,
                     "item attributes are incomplete; this variant is not compared with other listings");
         }
 
-        List<AuctionListing> market = comparableListings(candidate, activeListings, nowMillis, maximumListingAgeSeconds);
         // Only rivals count as evidence. The candidate's own ask is the thing being valued, so
         // counting it toward the minimum is circular and would let a single listing be a market.
         if (market.size() < minimumListings) {
@@ -145,19 +192,24 @@ public final class PriceEstimator {
                             + minimumListings + " are needed to judge an asking-price spread");
         }
 
-        List<BigDecimal> asks = market.stream().map(AuctionListing::unitPrice).toList();
-        BigDecimal marketMedian = median(asks);
-        BigDecimal mad = medianAbsoluteDeviation(asks, marketMedian);
-        BigDecimal dispersion = marketMedian.signum() == 0 ? BigDecimal.ONE
-                : Money.divide(mad, marketMedian).max(BigDecimal.ZERO);
+        BigDecimal marketMedian = statistics.median();
+        BigDecimal mad = statistics.mad();
+        BigDecimal dispersion = statistics.dispersion();
 
         // To resell, the listing must undercut the cheapest rival a buyer would actually take, so
         // that is the ceiling. The raw minimum is an extreme value, not an estimate: one manipulated
         // or mis-keyed listing would otherwise set the resale price for the entire market, so asks
         // too far from the median are discarded first.
-        List<AuctionListing> credible = credibleListings(market, marketMedian, mad);
-        BigDecimal lowestCompeting = credible.stream().map(AuctionListing::unitPrice)
-                .min(BigDecimal::compareTo).orElse(marketMedian);
+        List<AuctionListing> credible = statistics.credible();
+        BigDecimal lowestCompeting = credible.stream()
+                .filter(listing -> !listing.listingKey().equals(candidate.listingKey()))
+                .map(AuctionListing::unitPrice)
+                .min(BigDecimal::compareTo)
+                .orElseGet(() -> market.stream()
+                        .filter(listing -> !listing.listingKey().equals(candidate.listingKey()))
+                        .map(AuctionListing::unitPrice)
+                        .min(BigDecimal::compareTo)
+                        .orElse(marketMedian));
 
         BigDecimal candidateUnit = candidate.unitPrice();
         BigDecimal spreadPercent = Money.divide(marketMedian.subtract(candidateUnit), marketMedian)

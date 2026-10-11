@@ -64,10 +64,21 @@ public final class OpportunityEngine {
                 salesByFingerprint.computeIfAbsent(sale.fingerprint().value(), ignored -> new ArrayList<>()).add(sale);
             }
         }
+        // Fresh, comparable, unexpired listings grouped by variant. The estimator needs the market
+        // statistics of a variant once, not once per candidate, so they are summarised up front.
+        Map<String, List<AuctionListing>> freshByFingerprint = new HashMap<>();
         for (AuctionListing listing : safeListings) {
-            if (listing.fingerprint().comparable()) {
-                listingsByFingerprint.computeIfAbsent(listing.fingerprint().value(), ignored -> new ArrayList<>()).add(listing);
+            if (!listing.fingerprint().comparable()
+                    || nowMillis - listing.observedAtMillis() > maxListingAgeMillis
+                    || listing.expiresAtMillis() <= nowMillis) {
+                continue;
             }
+            listingsByFingerprint.computeIfAbsent(listing.fingerprint().value(), ignored -> new ArrayList<>()).add(listing);
+            freshByFingerprint.computeIfAbsent(listing.fingerprint().value(), ignored -> new ArrayList<>()).add(listing);
+        }
+        Map<String, PriceEstimator.AskMarketStats> statsByFingerprint = new HashMap<>();
+        for (Map.Entry<String, List<AuctionListing>> entry : freshByFingerprint.entrySet()) {
+            statsByFingerprint.put(entry.getKey(), PriceEstimator.summarise(entry.getValue()));
         }
 
         for (AuctionListing listing : safeListings) {
@@ -102,8 +113,10 @@ public final class OpportunityEngine {
             List<AuctionListing> exactListings = listingsByFingerprint.getOrDefault(listing.fingerprint().value(), List.of());
             PriceEstimate estimate;
             if (config.askOnlyAnalysis() && exactSales.isEmpty()) {
-                estimate = priceEstimator.estimateFromAsks(listing, exactListings, nowMillis,
-                        config.askMinimumListings(), config.askMinimumSpreadPercent(),
+                estimate = priceEstimator.estimateFromAsks(listing, exactListings,
+                        statsByFingerprint.getOrDefault(listing.fingerprint().value(),
+                                PriceEstimator.summarise(exactListings)),
+                        nowMillis, config.askMinimumListings(), config.askMinimumSpreadPercent(),
                         config.askUndercutPercent(), config.maxDataAgeSeconds());
             } else {
                 estimate = priceEstimator.estimate(listing, exactSales, exactListings, nowMillis,

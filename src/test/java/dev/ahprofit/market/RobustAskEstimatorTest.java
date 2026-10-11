@@ -50,7 +50,7 @@ class RobustAskEstimatorTest {
 
         assertEquals(new BigDecimal("2156"), result.conservativeUnitPrice(),
                 "the ceiling must come from the credible market, not from a dump");
-        assertEquals(new BigDecimal("2200"), result.lowestCompetingAsk(),
+        assertEquals(new BigDecimal("2200"), result.lowestCompetingUnitPrice(),
                 "the dump must not be reported as the cheapest competing ask");
         assertTrue(result.flags().stream().anyMatch(flag -> flag.contains("ignored as outliers")),
                 "the discarded dump must be disclosed: " + result.flags());

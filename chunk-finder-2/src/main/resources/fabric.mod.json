@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "chunkfinder",
+  "version": "${version}",
+  "name": "Chunk Finder 2",
+  "description": "Client visual studio for loaded chunks: geodes, debris, blocks, storage, trajectories, targets and freecam.",
+  "authors": ["Chunk Finder contributors"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.chunkfinder.ChunkFinderServer"],
+    "client": ["dev.chunkfinder.ChunkFinderClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

@@ -1,0 +1,37 @@
+name: Build Chunk Finder 2
+
+on:
+  push:
+    paths:
+      - 'chunk-finder-2/**'
+      - '.github/workflows/chunk-finder-build.yml'
+  pull_request:
+    paths:
+      - 'chunk-finder-2/**'
+      - '.github/workflows/chunk-finder-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: chunk-finder-2
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Build remapped mod
+        run: ./gradlew --no-daemon clean build --stacktrace
+      - name: Upload installable mod
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: chunk-finder-2.3.0-${{ github.sha }}
+          path: chunk-finder-2/build/libs/chunk-finder-2-2.3.0.jar
+          if-no-files-found: error

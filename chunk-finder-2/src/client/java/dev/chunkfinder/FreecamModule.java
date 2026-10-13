@@ -1,32 +1,35 @@
 package dev.chunkfinder;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.phys.Vec3;
 
+/** Detached camera. Mouse look is routed here by MouseLookMixin instead of turning the player. */
 public final class FreecamModule extends Module {
+    private static FreecamModule active;
+    private final OverlaySettings settings = new OverlaySettings("chunkfinder-freecam.json", 5, 1, 10);
     private Entity camera;
     private Entity previousCamera;
-    private int speed = 5;
     private boolean captured;
     private boolean up, down, left, right, jump, sneak, sprint;
 
     public FreecamModule() { super("Freecam", ModuleCategory.VISUALS, false); }
 
-    public int speed() { return speed; }
-    public void setSpeed(int value) { speed = Math.max(1, Math.min(10, value)); }
+    public int speed() { return settings.range(); }
+    public void setSpeed(int value) { settings.setRange(value); }
 
     public boolean toggle(Minecraft client) {
         if (isEnabled()) {
             stop(client);
             return true;
         }
-        if (!FeatureAccess.allowed(client) || client.player == null || client.level == null) return false;
+        if (!FeatureAccess.allowed(client) || client.player.isRemoved()) return false;
         Entity detached = EntityType.MARKER.create(client.level, EntitySpawnReason.LOAD);
         if (detached == null) return false;
         previousCamera = client.getCameraEntity();
@@ -36,17 +39,26 @@ public final class FreecamModule extends Module {
         camera.setXRot(client.player.getXRot());
         camera.setOldPosAndRot();
         client.setCameraEntity(camera);
+        active = this;
         super.setEnabled(true);
+        return true;
+    }
+
+    /** Return true if this mouse movement was consumed by the detached camera. */
+    public static boolean turnCamera(LocalPlayer player, double yaw, double pitch) {
+        FreecamModule mod = active;
+        Minecraft client = Minecraft.getInstance();
+        if (mod == null || !mod.isEnabled() || mod.camera == null || player == null
+                || player != client.player || client.getCameraEntity() != mod.camera
+                || mod.camera.level() != player.level()) return false;
+        mod.camera.turn(yaw, pitch);
         return true;
     }
 
     public void beginTick(Minecraft client) {
         if (!isEnabled()) return;
-        if (!FeatureAccess.allowed(client) || client.player == null || client.level == null
-                || camera == null || camera.isRemoved()) {
-            stop(client);
-            return;
-        }
+        if (!valid(client)) { stop(client); return; }
+        // The player reads these bindings during its tick. Mask them until END_CLIENT_TICK.
         captureAndMask(client.options.keyUp, 0);
         captureAndMask(client.options.keyDown, 1);
         captureAndMask(client.options.keyLeft, 2);
@@ -59,15 +71,16 @@ public final class FreecamModule extends Module {
 
     public void tick(Minecraft client) {
         if (!isEnabled()) return;
-        if (!FeatureAccess.allowed(client) || client.player == null || client.level == null
-                || camera == null || camera.isRemoved()) {
-            stop(client);
-            return;
-        }
-        camera.setYRot(client.player.getYRot());
-        camera.setXRot(client.player.getXRot());
+        if (!valid(client)) { stop(client); return; }
+        camera.setOldPosAndRot();
         if (captured && client.screen == null) moveCamera();
         restoreInputs(client);
+    }
+
+    private boolean valid(Minecraft client) {
+        return FeatureAccess.allowed(client) && !client.player.isRemoved() && camera != null
+                && !camera.isRemoved() && camera.level() == client.level
+                && client.getCameraEntity() == camera;
     }
 
     private void captureAndMask(KeyMapping mapping, int key) {
@@ -89,20 +102,17 @@ public final class FreecamModule extends Module {
         double forward = (up ? 1.0 : 0.0) - (down ? 1.0 : 0.0);
         double strafe = (right ? 1.0 : 0.0) - (left ? 1.0 : 0.0);
         double vertical = (jump ? 1.0 : 0.0) - (sneak ? 1.0 : 0.0);
-        double magnitude = Math.sqrt(forward * forward + strafe * strafe + vertical * vertical);
-        if (magnitude == 0.0) return;
-        forward /= magnitude;
-        strafe /= magnitude;
-        vertical /= magnitude;
-
+        if (forward == 0 && strafe == 0 && vertical == 0) return;
         double yaw = Math.toRadians(camera.getYRot());
-        double moveSpeed = speed * (sprint ? 0.2 : 0.1);
-        double dx = -Math.sin(yaw) * forward + Math.cos(yaw) * strafe;
-        double dz = Math.cos(yaw) * forward + Math.sin(yaw) * strafe;
-        Vec3 position = camera.position();
-        camera.setOldPosAndRot();
-        camera.setPos(position.x + dx * moveSpeed, position.y + vertical * moveSpeed,
-                position.z + dz * moveSpeed);
+        Vec3 look = camera.getLookAngle();
+        double dx = look.x * forward + Math.cos(yaw) * strafe;
+        double dy = look.y * forward + vertical;
+        double dz = look.z * forward + Math.sin(yaw) * strafe;
+        double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (length == 0) return;
+        double movement = speed() * (sprint ? 0.2 : 0.1) / length;
+        camera.setPos(camera.getX() + dx * movement, camera.getY() + dy * movement,
+                camera.getZ() + dz * movement);
     }
 
     private void restoreInputs(Minecraft client) {
@@ -119,21 +129,25 @@ public final class FreecamModule extends Module {
 
     private void stop(Minecraft client) {
         restoreInputs(client);
-        Entity restore = previousCamera;
-        if (client.level == null || restore == null || restore.isRemoved() || restore.level() != client.level) {
-            restore = client.player;
+        // Do not overwrite another mod's camera if it took ownership during freecam.
+        if (client != null && client.getCameraEntity() == camera) {
+            Entity restore = previousCamera;
+            if (client.level == null || restore == null || restore.isRemoved()
+                    || restore.level() != client.level) restore = client.player;
+            if (restore != null) client.setCameraEntity(restore);
         }
-        if (restore != null) client.setCameraEntity(restore);
         if (camera != null && !camera.isRemoved()) camera.setRemoved(Entity.RemovalReason.DISCARDED);
+        if (active == this) active = null;
         camera = null;
         previousCamera = null;
         super.setEnabled(false);
     }
 
     public void renderHud(Minecraft client, GuiGraphics graphics) {
-        if (!isEnabled() || client.options.hideGui) return;
-        Component label = Component.literal("FREECAM  ·  CLIENT CAMERA");
-        int x = (graphics.guiWidth() - client.font.width(label)) / 2;
-        graphics.drawString(client.font, label, x, 12, 0xFF8CE0BD, true);
+        if (!isEnabled() || client.options.hideGui || camera == null) return;
+        String label = "FREECAM  ·  " + speed() + "x  ·  "
+                + camera.getBlockX() + ", " + camera.getBlockY() + ", " + camera.getBlockZ();
+        graphics.drawCenteredString(client.font, Component.literal(label), graphics.guiWidth() / 2,
+                12, 0xFF8CE0BD);
     }
 }

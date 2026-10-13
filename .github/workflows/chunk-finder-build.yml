@@ -32,19 +32,19 @@ jobs:
       - name: Upload installable mod
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: chunk-finder-2.3.0-${{ github.sha }}
-          path: chunk-finder-2/build/libs/chunk-finder-2-2.3.0.jar
+          name: chunk-finder-2.4.0-${{ github.sha }}
+          path: chunk-finder-2/build/libs/chunk-finder-2-2.4.0.jar
           if-no-files-found: error
       - name: Publish direct-download JAR on session branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/arena/0ee3ad40-ah-bot'
         run: |
           mkdir -p downloads
-          cp chunk-finder-2/build/libs/chunk-finder-2-2.3.0.jar downloads/chunk-finder-2-2.3.0.jar
+          cp chunk-finder-2/build/libs/chunk-finder-2-2.4.0.jar downloads/chunk-finder-2-2.4.0.jar
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add downloads/chunk-finder-2-2.3.0.jar
+          git add downloads/chunk-finder-2-2.4.0.jar
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish compiled Chunk Finder 2.3.0 JAR'
+            git commit -m 'Publish compiled Chunk Finder 2.4.0 JAR'
             git push origin HEAD:arena/0ee3ad40-ah-bot
           fi
         working-directory: .

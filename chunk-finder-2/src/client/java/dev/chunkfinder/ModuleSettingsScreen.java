@@ -51,7 +51,7 @@ public final class ModuleSettingsScreen extends Screen {
         g.fill(divider, ui.y + 50, divider + 1, ui.y + ui.h - 34, 0xFF344152);
         g.fill(ui.x, ui.y + ui.h - 34, ui.x + ui.w, ui.y + ui.h - 33, 0xFF344152);
         g.drawString(font, Component.literal("◈  CHUNK FINDER"), ui.x + 16, ui.y + 14, WHITE, true);
-        g.drawString(font, Component.literal("MODULE STUDIO  /  2.3"), ui.x + 16, ui.y + 29, MUTED, false);
+        g.drawString(font, Component.literal("MODULE STUDIO  /  2.4"), ui.x + 16, ui.y + 29, MUTED, false);
         g.drawString(font, Component.literal(modules.modules().size() + " VISUAL MODULES"),
                 divider + 16, ui.y + 21, CYAN, true);
         g.fill(ui.x + ui.w - 32, ui.y + 12, ui.x + ui.w - 10, ui.y + 35,
@@ -171,6 +171,21 @@ public final class ModuleSettingsScreen extends Screen {
             list.add(toggle("Outlines", "Highlight storage through terrain", storage.blockHighlightEnabled(),
                     () -> storage.setBlockHighlightEnabled(!storage.blockHighlightEnabled())));
             list.add(action("Rescan loaded chunks", "Refresh previously scanned blocks", storage::requestRescan));
+        } else if (selected instanceof SpawnerEspModule spawners) {
+            list.add(slider("Search radius", "Mob and trial spawners in loaded chunks", spawners.searchRadius(), 2, 12,
+                    spawners::setSearchRadius));
+            list.add(toggle("Trace lines", "Connect view to detected spawners", spawners.tracesEnabled(),
+                    () -> spawners.setTracesEnabled(!spawners.tracesEnabled())));
+            list.add(toggle("Outlines", "Highlight spawners through terrain", spawners.blockHighlightEnabled(),
+                    () -> spawners.setBlockHighlightEnabled(!spawners.blockHighlightEnabled())));
+            list.add(action("Rescan loaded chunks", "Refresh previously scanned blocks", spawners::requestRescan));
+        } else if (selected instanceof EntityEspModule entities) {
+            list.add(slider("Max distance", "Only client-visible loaded entities", entities.range(), 16, 128,
+                    entities::setRange));
+            String label = entities.mode() == EntityEspModule.Mode.LIVING ? "Include players" : "Show stack counts";
+            String hint = entities.mode() == EntityEspModule.Mode.LIVING
+                    ? "Highlight players as well as mobs" : "List item stack sizes in the HUD";
+            list.add(toggle(label, hint, entities.option(), () -> entities.setOption(!entities.option())));
         } else if (selected instanceof TrajectoriesModule trajectories) {
             list.add(slider("Prediction steps", "Approximate flight; not a guarantee", trajectories.steps(), 12, 72,
                     trajectories::setSteps));
@@ -190,6 +205,9 @@ public final class ModuleSettingsScreen extends Screen {
         if (module instanceof AncientDebrisFinderModule) return "Locate visible Nether debris in loaded chunks";
         if (module instanceof ItemEspModule) return "Highlight a selected block through walls";
         if (module instanceof StorageEspModule) return "Chests, barrels, shulkers and other storage";
+        if (module instanceof SpawnerEspModule) return "Mob and trial spawners in loaded chunks";
+        if (module instanceof EntityEspModule e) return e.mode() == EntityEspModule.Mode.LIVING
+                ? "Players and mobs sent to your client" : "Dropped item entities sent to your client";
         if (module instanceof TrajectoriesModule) return "Preview moving projectile and item paths";
         if (module instanceof TargetRendererModule) return "Outline your current crosshair target";
         return "Explore without moving your player";
@@ -199,6 +217,7 @@ public final class ModuleSettingsScreen extends Screen {
         if (module instanceof AncientDebrisFinderModule d) return d.detectedCount() + " debris  ·  " + d.scanStatus();
         if (module instanceof ItemEspModule e) return e.detectedCount() + " blocks  ·  " + e.scanStatus();
         if (module instanceof StorageEspModule e) return e.detectedCount() + " storage  ·  " + e.scanStatus();
+        if (module instanceof SpawnerEspModule e) return e.detectedCount() + " spawners  ·  " + e.scanStatus();
         return module.isEnabled() ? "ACTIVE  ·  client-side" : "READY  ·  offline";
     }
 

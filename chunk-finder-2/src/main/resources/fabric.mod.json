@@ -3,10 +3,11 @@
   "id": "chunkfinder",
   "version": "${version}",
   "name": "Chunk Finder 2",
-  "description": "Client visual studio for loaded chunks: geodes, debris, blocks, storage, trajectories, targets and freecam.",
+  "description": "Client visuals for loaded chunks: geodes, debris, blocks, storage, spawners, entities, items, trajectories and freecam.",
   "authors": ["Chunk Finder contributors"],
   "license": "MIT",
   "environment": "*",
+  "mixins": ["chunkfinder.client.mixins.json"],
   "entrypoints": {
     "main": ["dev.chunkfinder.ChunkFinderServer"],
     "client": ["dev.chunkfinder.ChunkFinderClient"]

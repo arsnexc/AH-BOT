@@ -40,6 +40,7 @@ public final class ChunkFinderClient implements ClientModInitializer {
             if (modules.ancientDebrisFinder().isEnabled()) modules.ancientDebrisFinder().tick(client);
             if (modules.itemEsp().isEnabled()) modules.itemEsp().tick(client);
             if (modules.storageEsp().isEnabled()) modules.storageEsp().tick(client);
+            if (modules.spawnerEsp().isEnabled()) modules.spawnerEsp().tick(client);
             modules.freecam().tick(client);
         });
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "chunk_finder_overlay"),
@@ -50,6 +51,12 @@ public final class ChunkFinderClient implements ClientModInitializer {
                 (graphics, deltaTracker) -> modules.itemEsp().renderHud(Minecraft.getInstance(), graphics));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "storage_esp_overlay"),
                 (graphics, deltaTracker) -> modules.storageEsp().renderHud(Minecraft.getInstance(), graphics));
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "spawner_esp_overlay"),
+                (graphics, deltaTracker) -> modules.spawnerEsp().renderHud(Minecraft.getInstance(), graphics));
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "entity_esp_overlay"),
+                (graphics, deltaTracker) -> modules.entityEsp().renderHud(Minecraft.getInstance(), graphics));
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "dropped_item_esp_overlay"),
+                (graphics, deltaTracker) -> modules.droppedItemEsp().renderHud(Minecraft.getInstance(), graphics));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "trajectories_overlay"),
                 (graphics, deltaTracker) -> modules.trajectories().renderHud(Minecraft.getInstance(), graphics));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "target_renderer_overlay"),
@@ -60,6 +67,9 @@ public final class ChunkFinderClient implements ClientModInitializer {
         WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.ancientDebrisFinder()::renderWorld);
         WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.itemEsp()::renderWorld);
         WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.storageEsp()::renderWorld);
+        WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.spawnerEsp()::renderWorld);
+        WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.entityEsp()::renderWorld);
+        WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.droppedItemEsp()::renderWorld);
         WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.trajectories()::renderWorld);
         WorldRenderEvents.BEFORE_DEBUG_RENDER.register(modules.targetRenderer()::renderWorld);
     }
